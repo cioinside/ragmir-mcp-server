@@ -5,11 +5,27 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, resolve, basename } from 'node:path';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { join, resolve, basename, dirname } from 'node:path';
 import { z } from 'zod';
 
-const UPLOAD_URL = process.env.RAGMIR_UPLOAD_URL || 'http://192.168.1.226:8002/upload';
+// Resolve upload URL: ENV > config file > default
+function resolveUploadUrl() {
+  if (process.env.RAGMIR_UPLOAD_URL) {
+    return { url: process.env.RAGMIR_UPLOAD_URL, source: 'env:RAGMIR_UPLOAD_URL' };
+  }
+  // Try config.json next to the script
+  const configPath = join(dirname(new URL(import.meta.url).pathname), 'config.json');
+  if (existsSync(configPath)) {
+    try {
+      const cfg = JSON.parse(readFileSync(configPath, 'utf8'));
+      if (cfg.uploadUrl) return { url: cfg.uploadUrl, source: `config.json (${configPath})` };
+    } catch {}
+  }
+  return { url: 'http://192.168.1.226:8002/upload', source: 'default' };
+}
+
+const { url: UPLOAD_URL, source: UPLOAD_URL_SOURCE } = resolveUploadUrl();
 
 function log(...args) {
   process.stderr.write(`[ragmir-upload] ${args.join(' ')}\n`);
@@ -152,7 +168,7 @@ server.registerTool(
 // ─── Start server ──────────────────────────────────────────────────────────
 
 log(`Started. Upload URL: ${UPLOAD_URL}`);
-log(`RAGMIR env: ${process.env.RAGMIR_UPLOAD_URL ? 'set' : 'NOT SET (using default)'}`);
+log(`URL source: ${UPLOAD_URL_SOURCE}`);
 
 // Diagnostic: try to reach the upload server at startup
 (async () => {
