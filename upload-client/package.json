@@ -6,5 +6,9 @@
   "main": "upload-client.mjs",
   "bin": {
     "ragmir-upload-client": "./upload-client.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.23.8"
   }
 }
