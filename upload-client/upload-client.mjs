@@ -7,6 +7,9 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, resolve, basename, dirname } from 'node:path';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
+import { URL } from 'node:url';
 import { z } from 'zod';
 
 // Resolve upload URL: ENV > config file > default
@@ -68,32 +71,69 @@ server.registerTool(
     log(`Uploading ${fileName} (${fileBuffer.length} bytes) to ${project}/${remotePath}`);
 
     try {
-      const form = new FormData();
-      form.append('project', project);
-      form.append('path', remotePath);
-      form.append('file', new Blob([fileBuffer]), fileName);
-      form.append('autoIngest', 'true');
+      // Build multipart/form-data manually (fetch+FormData uses undici with 50MB default limit)
+      const boundary = '----RagmirUploadBoundary' + Math.random().toString(16).slice(2);
+      const parts = [];
+      const fields = [
+        ['project', project],
+        ['path', remotePath],
+        ['autoIngest', 'true'],
+      ];
+      for (const [name, value] of fields) {
+        parts.push(Buffer.from(`--${boundary}\r\n`));
+        parts.push(Buffer.from(`Content-Disposition: form-data; name="${name}"\r\n\r\n`));
+        parts.push(Buffer.from(`${value}\r\n`));
+      }
+      parts.push(Buffer.from(`--${boundary}\r\n`));
+      parts.push(Buffer.from(`Content-Disposition: form-data; name="file"; filename="${fileName}"\r\n`));
+      parts.push(Buffer.from(`Content-Type: application/octet-stream\r\n\r\n`));
+      parts.push(fileBuffer);
+      parts.push(Buffer.from(`\r\n--${boundary}--\r\n`));
+      const body = Buffer.concat(parts);
 
-      const res = await fetch(UPLOAD_URL, { method: 'POST', body: form });
-      log(`POST ${UPLOAD_URL} → status ${res.status}`);
-      log(`Response content-type: ${res.headers.get('content-type')}`);
+      // Use http.request directly — no undici body size limit
+      const parsedUrl = new URL(UPLOAD_URL);
+      const httpMod = parsedUrl.protocol === 'https:' ? httpsRequest : httpRequest;
+      const status = await new Promise((resolve2, reject) => {
+        const req = httpMod({
+          hostname: parsedUrl.hostname,
+          port: parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80),
+          path: parsedUrl.pathname + parsedUrl.search,
+          method: 'POST',
+          headers: {
+            'Content-Type': `multipart/form-data; boundary=${boundary}`,
+            'Content-Length': body.length,
+          },
+        });
+        let responseBody = '';
+        let responseStatus = 0;
+        req.on('response', (res) => {
+          responseStatus = res.statusCode;
+          res.setEncoding('utf8');
+          res.on('data', (chunk) => { responseBody += chunk; });
+          res.on('end', () => resolve2({ status: responseStatus, body: responseBody }));
+        });
+        req.on('error', reject);
+        req.write(body);
+        req.end();
+      });
 
-      const responseText = await res.text();
-      log(`Response body (${responseText.length} chars): ${responseText.slice(0, 500)}`);
+      log(`POST ${UPLOAD_URL} → status ${status.status}`);
+      log(`Response body (${status.body.length} chars): ${status.body.slice(0, 500)}`);
 
-      if (!responseText || responseText.trim().length === 0) {
+      if (!status.body || status.body.trim().length === 0) {
         return {
-          content: [{ type: 'text', text: `Upload error: server returned empty response (status ${res.status})` }],
+          content: [{ type: 'text', text: `Upload error: server returned empty response (status ${status.status})` }],
           isError: true,
         };
       }
 
       let result;
       try {
-        result = JSON.parse(responseText);
+        result = JSON.parse(status.body);
       } catch (parseErr) {
         return {
-          content: [{ type: 'text', text: `Upload error: invalid JSON response (status ${res.status}, body: "${responseText.slice(0, 200)}")` }],
+          content: [{ type: 'text', text: `Upload error: invalid JSON response (status ${status.status}, body: "${status.body.slice(0, 200)}")` }],
           isError: true,
         };
       }
@@ -174,9 +214,25 @@ log(`URL source: ${UPLOAD_URL_SOURCE}`);
 (async () => {
   try {
     const baseUrl = UPLOAD_URL.replace(/\/upload$/, '');
-    const res = await fetch(baseUrl, { method: 'GET' });
-    const text = await res.text();
-    log(`Diagnostic GET ${baseUrl} → ${res.status} "${text.slice(0, 100)}"`);
+    const parsedUrl = new URL(baseUrl);
+    const httpMod = parsedUrl.protocol === 'https:' ? httpsRequest : httpRequest;
+    const status = await new Promise((resolve2, reject) => {
+      const req = httpMod({
+        hostname: parsedUrl.hostname,
+        port: parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80),
+        path: parsedUrl.pathname + parsedUrl.search,
+        method: 'GET',
+      });
+      let body = '';
+      req.on('response', (res) => {
+        res.setEncoding('utf8');
+        res.on('data', (c) => { body += c; });
+        res.on('end', () => resolve2({ status: res.statusCode, body }));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+    log(`Diagnostic GET ${baseUrl} → ${status.status} "${status.body.slice(0, 100)}"`);
   } catch (e) {
     log(`Diagnostic GET failed: ${e.message}`);
     log(`Make sure the upload server is reachable at ${UPLOAD_URL}`);
