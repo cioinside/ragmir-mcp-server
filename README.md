@@ -227,7 +227,7 @@ Add to `~/.config/opencode/opencode.jsonc` on the remote PC:
   "mcp": {
     "ragmir": {
       "type": "remote",
-      "url": "http://192.168.1.100:8001",
+      "url": "http://192.168.1.100:8001/sse",
       "enabled": true
     }
   }
