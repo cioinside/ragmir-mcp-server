@@ -269,6 +269,72 @@ Replace `192.168.1.100` with your server's IP.
 
 **Port 8001** serves the SSE transport that OpenCode expects. Port 8000 is REST/OpenAPI (for Open WebUI).
 
+## Connecting from OpenCode with Binary File Upload (Windows)
+
+For agents on Windows that need to upload binary files (.docx, .pdf, .xlsx, images) without writing code, use the **upload-client** local MCP server. It provides an `upload_to_ragmir` tool that reads files from the local disk and sends them to the remote server.
+
+### Setup
+
+1. Clone the repo and install dependencies:
+```bash
+git clone https://github.com/cioinside/ragmir-mcp-server.git C:\ragmir-mcp-server
+cd C:\ragmir-mcp-server\upload-client
+npm install
+```
+
+2. Add to `opencode.jsonc` (or `opencode.json` in the project root):
+```jsonc
+{
+  "mcp": {
+    "ragmir": {
+      "type": "remote",
+      "url": "http://192.168.1.100:8001/sse",
+      "enabled": true
+    },
+    "ragmir-upload": {
+      "type": "local",
+      "command": ["node", "C:\\ragmir-mcp-server\\upload-client\\upload-client.mjs"],
+      "environment": {
+        "RAGMIR_UPLOAD_URL": "http://192.168.1.100:8002/upload"
+      },
+      "enabled": true
+    }
+  }
+}
+```
+
+3. Restart OpenCode.
+
+### How the agent uses it
+
+The agent gets an `upload_to_ragmir` tool from the ragmir-upload MCP server. It simply calls:
+
+```
+upload_to_ragmir(project="my-project", path="docs/report.docx", localPath="C:\\Users\\user\\Documents\\report.docx")
+```
+
+The agent reads the file locally and uploads it — **no code, no shell commands, no manual steps**.
+
+### Tools provided
+
+| Tool | Description |
+|---|---|
+| `upload_to_ragmir(project, path, localPath)` | Upload a local file to a Ragmir project |
+| `list_local_files(directory, extensions?)` | List files in a local directory (useful for finding files to upload) |
+
+### Alternative: config.json
+
+If environment variables don't work, create `config.json` next to `upload-client.mjs`:
+```json
+{
+  "uploadUrl": "http://192.168.1.100:8002/upload"
+}
+```
+
+### No file size limit
+
+The upload client uses Node.js `http.request` (no undici `fetch`), so there is **no 50MB limit** — files of any size can be uploaded.
+
 ## Connecting from Open WebUI
 
 1. Go to **Admin Settings** → **Connections** → **OpenAPI Servers**
