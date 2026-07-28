@@ -1,0 +1,15 @@
+[Unit]
+Description=Ragmir MCP Server (mcp-proxy SSE)
+After=network.target
+
+[Service]
+Type=simple
+Environment=PATH=/usr/local/node22/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/local/node22/bin/npx mcp-proxy --port 8001 --host 0.0.0.0 -- node /usr/local/lib/ragmir-server/server.js
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

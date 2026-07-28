@@ -113,12 +113,13 @@ SSE_PORT="${RAGMIR_SSE_PORT:-8001}"
 
 cat > /etc/systemd/system/ragmir-sse.service << SSEEOF
 [Unit]
-Description=Ragmir MCP SSE Gateway (supergateway)
+Description=Ragmir MCP Server (mcp-proxy SSE)
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=$(which npx 2>/dev/null || echo "/usr/local/node22/bin/npx") supergateway --stdio "node $INSTALL_DIR/server.js" --port $SSE_PORT
+Environment=PATH=/usr/local/node22/bin:/usr/local/bin:/usr/bin:/bin:$HOME/.local/bin
+ExecStart=$(which npx 2>/dev/null || echo "/usr/local/node22/bin/npx") mcp-proxy --port $SSE_PORT --host 0.0.0.0 -- node $INSTALL_DIR/server.js
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal

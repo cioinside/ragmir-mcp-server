@@ -19,7 +19,7 @@ Remote AI agents (OpenCode, Claude, Cursor, etc.) can create projects, provide f
          │                                       │
          │  SSE (MCP transport)                  │  REST (OpenAPI)
          ▼                                       ▼
-    supergateway :8001                     mcpo :8000
+    mcp-proxy :8001                         mcpo :8000
          │                                       │
          │  stdio (stdin/stdout)                 │  stdio
          ▼                                       ▼
