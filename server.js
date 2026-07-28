@@ -157,6 +157,23 @@ const TOOLS = [
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   },
   {
+    name: 'ragmir_upload_binary',
+    title: 'Upload Binary File',
+    description: 'Upload a binary file (PDF, DOCX, XLSX, PPTX, images, etc.) to a project. Pass base64-encoded content. Ragmir natively parses these formats during ingest. Do NOT try to extract text yourself — just upload the raw binary.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project: { type: 'string', minLength: 1, maxLength: 100, description: 'Project name' },
+        path: { type: 'string', minLength: 1, description: 'Relative file path within the project (e.g. "docs/report.docx")' },
+        contentBase64: { type: 'string', minLength: 1, description: 'File content encoded as base64' },
+        autoIngest: { type: 'boolean', description: 'Auto-run ingestion after upload (default: true)' },
+      },
+      required: ['project', 'path', 'contentBase64'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
     name: 'ragmir_add_sources',
     title: 'Add Sources',
     description: 'Add source glob patterns to a project. These patterns determine which files get indexed.',
@@ -456,6 +473,29 @@ const handlers = {
     return { content: [{ type: 'text', text: `Deleted ${filePath} from project "${project}"` }] };
   },
 
+  ragmir_upload_binary({ project, path: filePath, contentBase64, autoIngest }) {
+    const projectPath = getProjectPath(project);
+    if (!fs.existsSync(projectPath)) throw new Error(`Project "${project}" not found`);
+
+    const fullPath = path.join(projectPath, filePath);
+    fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+    const buffer = Buffer.from(contentBase64, 'base64');
+    fs.writeFileSync(fullPath, buffer);
+
+    let result = `Uploaded ${buffer.length} bytes to ${filePath} in project "${project}"`;
+
+    if (autoIngest !== false) {
+      try {
+        const out = rgr('ingest', projectPath, 300000);
+        result += '\n\nIngested. Document is searchable.';
+      } catch (e) {
+        result += `\n\nIngest failed: ${e.message}. Run ragmir_ingest manually.`;
+      }
+    }
+
+    return { content: [{ type: 'text', text: result }] };
+  },
+
   ragmir_add_sources({ project, patterns }) {
     const projectPath = getProjectPath(project);
     if (!fs.existsSync(path.join(projectPath, '.ragmir'))) {
@@ -533,19 +573,21 @@ function handleRequest(req) {
       '',
       'WORKFLOW:',
       '1. ragmir_create_project — create a named project',
-      '2. ragmir_write_file / ragmir_write_files_batch — upload source files (auto-ingests by default)',
+      '2. ragmir_write_files_batch — upload text files (.py, .md, .js, etc.)',
+      '   ragmir_upload_binary — upload binary files (.docx, .pdf, .xlsx, .pptx, images)',
       '3. ragmir_search / ragmir_ask / ragmir_research — query the knowledge base',
       '',
-      'Writing files automatically adds source patterns and runs ingestion.',
-      'Files become searchable immediately after the write call returns.',
-      'Set autoIngest:false on write tools to skip auto-ingest (manual control).',
+      'Writing files auto-ingests them. They become searchable immediately.',
       '',
-      'Use these tools DIRECTLY — do NOT write shell scripts or curl commands.',
+      'BINARY FILES: Do NOT read or parse .docx/.pdf/.xlsx yourself.',
+      'Use ragmir_upload_binary with base64-encoded content.',
+      'Ragmir handles text extraction natively during ingest.',
       '',
-      'Example:',
-      '  → ragmir_create_project(name="my-api")',
+      'Example (text file):',
       '  → ragmir_write_files_batch(project="my-api", files=[{path:"src/main.py", content:"..."}])',
-      '  → ragmir_search(project="my-api", query="How does auth work?")',
+      '',
+      'Example (binary file):',
+      '  → ragmir_upload_binary(project="my-api", path:"docs/report.docx", contentBase64:"JVBER...")',
     ].join('\n'),
     });
     return;
