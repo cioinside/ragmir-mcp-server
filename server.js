@@ -63,7 +63,10 @@ const TOOLS = [
   {
     name: 'ragmir_list_projects',
     title: 'List Projects',
-    description: 'List all Ragmir projects on this server.',
+    description:
+      'Lists all available Ragmir projects. ' +
+      'CALL THIS FIRST when the user mentions a project by name or topic and you are unsure which project contains their data, ' +
+      'or when you need to find which project to search.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
@@ -212,13 +215,16 @@ const TOOLS = [
   {
     name: 'ragmir_search',
     title: 'Search',
-    description: 'Search project corpus with citations. Returns the most relevant passages.',
+    description:
+      'ALWAYS use this when the user asks about content previously uploaded to a Ragmir project. ' +
+      'Use it for ANY factual question about documents, code, notes, manuals, PDFs, etc. that have been indexed. ' +
+      'Returns the most relevant passages with source citations.',
     inputSchema: {
       type: 'object',
       properties: {
         project: { type: 'string', minLength: 1, maxLength: 100, description: 'Project name' },
-        query: { type: 'string', minLength: 1, maxLength: 20000, description: 'Search query' },
-        topK: { type: 'integer', exclusiveMinimum: 0, maximum: 100, description: 'Max results (default 5)' },
+        query: { type: 'string', minLength: 1, maxLength: 20000, description: 'Natural language search query describing what you want to find' },
+        topK: { type: 'integer', exclusiveMinimum: 0, maximum: 100, description: 'Max results to return (default 5, increase for broader searches)' },
       },
       required: ['project', 'query'],
       additionalProperties: false,
@@ -228,13 +234,16 @@ const TOOLS = [
   {
     name: 'ragmir_ask',
     title: 'Ask',
-    description: 'Get cited context for a question (without LLM). Returns relevant passages.',
+    description:
+      'Ask a question against a Ragmir project and get an LLM-synthesized answer with cited sources. ' +
+      'USE THIS for complex questions that require reasoning over multiple passages, summarizing, or comparing information ' +
+      'from the project. Use ragmir_search instead if you just need raw relevant passages.',
     inputSchema: {
       type: 'object',
       properties: {
         project: { type: 'string', minLength: 1, maxLength: 100, description: 'Project name' },
-        query: { type: 'string', minLength: 1, maxLength: 20000, description: 'Question' },
-        topK: { type: 'integer', exclusiveMinimum: 0, maximum: 100, description: 'Max results' },
+        query: { type: 'string', minLength: 1, maxLength: 20000, description: 'The question to answer' },
+        topK: { type: 'integer', exclusiveMinimum: 0, maximum: 100, description: 'Max sources to use (default 5)' },
       },
       required: ['project', 'query'],
       additionalProperties: false,
@@ -244,13 +253,16 @@ const TOOLS = [
   {
     name: 'ragmir_research',
     title: 'Research',
-    description: 'Run multi-query research with cited evidence across the project corpus.',
+    description:
+      'Deep multi-query research across the entire project corpus. ' +
+      'USE THIS when the user wants an in-depth investigation, comprehensive report, or comparison ' +
+      'across many documents. Slower but more thorough than ragmir_ask.',
     inputSchema: {
       type: 'object',
       properties: {
         project: { type: 'string', minLength: 1, maxLength: 100, description: 'Project name' },
-        query: { type: 'string', minLength: 1, maxLength: 20000, description: 'Research query' },
-        topK: { type: 'integer', exclusiveMinimum: 0, maximum: 100, description: 'Max results' },
+        query: { type: 'string', minLength: 1, maxLength: 20000, description: 'Research question or topic to investigate' },
+        topK: { type: 'integer', exclusiveMinimum: 0, maximum: 100, description: 'Max sources (default 5)' },
       },
       required: ['project', 'query'],
       additionalProperties: false,
@@ -554,19 +566,33 @@ function handleRequest(req) {
       capabilities: { resources: { listChanged: true }, tools: { listChanged: true } },
       serverInfo: { name: 'ragmir-universal', version: '1.0.0' },
       instructions: [
-      'Ragmir — local RAG knowledge base. Use these tools directly.',
+      'Ragmir — local RAG knowledge base that stores documents, code, and notes.',
+      '',
+      '=== WHEN TO SEARCH THE KNOWLEDGE BASE ===',
+      'ALWAYS use ragmir_search/ragmir_ask/ragmir_research when the user asks about:',
+      '- The contents of files they previously uploaded',
+      '- Project documentation, manuals, reports, notes, code',
+      '- Any factual question where the answer might be in their indexed data',
+      'If you do not know which project contains the data, call ragmir_list_projects first.',
       '',
       'PROJECT WORKFLOW:',
-      '1. ragmir_create_project(name) — create project',
-      '2. ragmir_write_files_batch(project, files) — upload text/code files',
-      '3. ragmir_search(project, query) — search the knowledge base',
+      '1. ragmir_list_projects() — find which project to use (only if uncertain)',
+      '2. ragmir_create_project(name) — only when creating a new project',
+      '3. ragmir_write_files_batch(project, files) — upload TEXT files (code, .md, .txt)',
+      '   OR upload_to_ragmir() from ragmir-upload MCP for BINARY files (.docx, .pdf, .xlsx, images)',
+      '4. Files auto-ingest. No need to call ingest manually.',
+      '5. ragmir_search / ragmir_ask / ragmir_research — query the indexed content.',
       '',
-      'TEXT FILES: Use ragmir_write_files_batch with "content" field.',
-      'BINARY FILES (.docx, .pdf, .xlsx, images): Use the upload_to_ragmir tool from ragmir-upload MCP server.',
+      'CHOOSING THE RIGHT QUERY TOOL:',
+      '- ragmir_search → raw passages with citations (fast, prefer for specific lookups)',
+      '- ragmir_ask → LLM-synthesized answer with citations (use for questions needing reasoning)',
+      '- ragmir_research → deep multi-query investigation (use for reports/comparisons/overviews)',
+      '',
+      'BINARY FILES (.docx, .pdf, .xlsx, .pptx, images): use the upload_to_ragmir tool from the ragmir-upload MCP server.',
       '  Example: upload_to_ragmir(project="myproject", path="docs/report.docx", localPath="C:\\Users\\user\\Documents\\report.docx")',
-      '  The upload_to_ragmir tool reads the local file and uploads it automatically. NO code/shell commands needed.',
+      '  It reads the local file and uploads it automatically. NEVER write code or shell commands for this — just call the tool.',
       '',
-      'Files are auto-indexed. Search works immediately after upload.',
+      'Do not announce "let me search" — just call the tool directly and use the result.',
     ].join('\n'),
     });
     return;
