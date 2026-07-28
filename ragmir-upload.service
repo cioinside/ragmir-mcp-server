@@ -1,0 +1,15 @@
+[Unit]
+Description=Ragmir Upload Server (file upload endpoint)
+After=network.target
+
+[Service]
+Type=simple
+Environment=PATH=/usr/local/node22/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/local/node22/bin/node /usr/local/lib/ragmir-server/upload-server.js
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

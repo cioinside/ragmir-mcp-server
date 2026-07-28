@@ -33,6 +33,11 @@ Two ports, one server:
 - **Port 8001** — SSE transport (MCP protocol) for OpenCode, Claude, Cursor
 - **Port 8000** — REST/OpenAPI proxy (via mcpo) for Open WebUI
 
+Three services:
+- `ragmir-mcp` (mcpo) — port 8000, REST/OpenAPI
+- `ragmir-sse` (mcp-proxy) — port 8001, SSE/MCP
+- `ragmir-upload` (upload-server) — port 8002, file upload endpoint
+
 ## Quick Install
 
 ### Prerequisites
@@ -217,6 +222,32 @@ print(r.json())
 | `ragmir_search` | Search with citations |
 | `ragmir_ask` | Get context for a question (no LLM) |
 | `ragmir_research` | Multi-query research |
+
+## Uploading Binary Files
+
+Text files (.py, .md, .js) → use `ragmir_write_files_batch` MCP tool.
+
+Binary files (.docx, .pdf, .xlsx, images) → use HTTP upload endpoint (too large for MCP tool calls):
+
+```bash
+# Linux/Mac
+curl -X POST http://192.168.1.100:8002/upload \
+  -F "project=my-project" \
+  -F "path=docs/report.docx" \
+  -F "file=@/path/to/report.docx"
+
+# Windows PowerShell
+Invoke-WebRequest -Uri "http://192.168.1.100:8002/upload" `
+  -Method POST `
+  -Form @{project="my-project"; path="docs/report.docx"; file=Get-Content "C:\path\report.docx" -Encoding Byte}
+```
+
+Response:
+```json
+{"ok":true,"project":"my-project","path":"docs/report.docx","bytes":12345,"ingested":true}
+```
+
+Files auto-ingest on upload. If `autoIngest=false`, call `ragmir_ingest` via MCP afterwards.
 
 ## Connecting from Remote OpenCode
 
