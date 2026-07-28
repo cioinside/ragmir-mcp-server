@@ -1,0 +1,10 @@
+{
+  "name": "ragmir-upload-client",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Local MCP server for uploading files to Ragmir from your machine",
+  "main": "upload-client.mjs",
+  "bin": {
+    "ragmir-upload-client": "./upload-client.mjs"
+  }
+}

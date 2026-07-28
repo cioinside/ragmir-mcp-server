@@ -556,12 +556,17 @@ function handleRequest(req) {
       instructions: [
       'Ragmir — local RAG knowledge base. Use these tools directly.',
       '',
-      'ragmir_create_project(name) — create project',
-      'ragmir_write_files_batch(project, files) — upload text/code files',
-      'ragmir_search(project, query) — search the knowledge base',
+      'PROJECT WORKFLOW:',
+      '1. ragmir_create_project(name) — create project',
+      '2. ragmir_write_files_batch(project, files) — upload text/code files',
+      '3. ragmir_search(project, query) — search the knowledge base',
+      '',
+      'TEXT FILES: Use ragmir_write_files_batch with "content" field.',
+      'BINARY FILES (.docx, .pdf, .xlsx, images): Use the upload_to_ragmir tool from ragmir-upload MCP server.',
+      '  Example: upload_to_ragmir(project="myproject", path="docs/report.docx", localPath="C:\\Users\\user\\Documents\\report.docx")',
+      '  The upload_to_ragmir tool reads the local file and uploads it automatically. NO code/shell commands needed.',
       '',
       'Files are auto-indexed. Search works immediately after upload.',
-      'Binary files (.docx, .pdf, .xlsx) are placed in the project directory by the user — they are auto-indexed by the file watcher. Do not handle binary file uploads.',
     ].join('\n'),
     });
     return;
