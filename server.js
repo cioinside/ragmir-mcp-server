@@ -34,7 +34,7 @@ const TOOLS = [
   {
     name: 'ragmir_create_project',
     title: 'Create Project',
-    description: 'Create a new Ragmir project: creates directory, initializes .ragmir, and optionally ingests files.',
+    description: 'Create a new Ragmir project. Creates a directory and initializes .ragmir config. Does NOT ingest files — after creating, upload files with ragmir_write_file/ragmir_write_files_batch, then add sources with ragmir_add_sources, then run ragmir_ingest.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -499,7 +499,26 @@ function handleRequest(req) {
       protocolVersion: '2024-11-05',
       capabilities: { resources: { listChanged: true }, tools: { listChanged: true } },
       serverInfo: { name: 'ragmir-universal', version: '1.0.0' },
-      instructions: 'Ragmir Universal MCP Server. Create projects, upload files, ingest, and search — all via MCP.',
+      instructions: [
+      'Ragmir Universal MCP Server — local RAG knowledge base.',
+      '',
+      'WORKFLOW (follow this sequence):',
+      '1. ragmir_create_project — create a named project',
+      '2. ragmir_write_file or ragmir_write_files_batch — upload source files into the project',
+      '3. ragmir_add_sources — tell Ragmir which files to index (glob patterns like "**/*.py")',
+      '4. ragmir_ingest — build the vector index (run after writing files and adding sources)',
+      '5. ragmir_search / ragmir_ask / ragmir_research — query the indexed knowledge base',
+      '',
+      'Use these tools DIRECTLY — do NOT write shell scripts or curl commands.',
+      'Each tool is an MCP function call. Call it with the required arguments.',
+      '',
+      'Example flow for indexing a codebase:',
+      '  → ragmir_create_project(name="my-api")',
+      '  → ragmir_write_files_batch(project="my-api", files=[{path:"src/main.py", content:"..."}])',
+      '  → ragmir_add_sources(project="my-api", patterns=["src/**/*.py", "docs/**/*.md"])',
+      '  → ragmir_ingest(project="my-api")',
+      '  → ragmir_search(project="my-api", query="How does auth work?")',
+    ].join('\n'),
     });
     return;
   }
