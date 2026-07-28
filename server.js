@@ -70,16 +70,21 @@ const TOOLS = [
   {
     name: 'ragmir_write_file',
     title: 'Write File',
-    description: 'Write a file to a project directory. Creates parent dirs automatically. Overwrites existing files. By default, automatically adds source patterns and runs ingestion so the file is immediately searchable. Set autoIngest:false to skip.',
+    description: 'Write a file to a project. For text files use "content", for binary files (.docx, .pdf, .xlsx, .pptx, images) base64-encode the file and use "contentBase64". Auto-ingests by default.',
     inputSchema: {
       type: 'object',
       properties: {
         project: { type: 'string', minLength: 1, maxLength: 100, description: 'Project name' },
-        path: { type: 'string', minLength: 1, description: 'Relative file path within the project (e.g. "docs/README.md")' },
-        content: { type: 'string', description: 'File content (text)' },
-        autoIngest: { type: 'boolean', description: 'Auto-add source patterns and ingest (default: true)' },
+        path: { type: 'string', minLength: 1, description: 'Relative file path (e.g. "docs/report.docx")' },
+        content: { type: 'string', description: 'Text content for text files' },
+        contentBase64: { type: 'string', minLength: 1, description: 'Base64-encoded content for binary files (docx, pdf, xlsx, images)' },
+        autoIngest: { type: 'boolean', description: 'Auto-run ingestion after write (default: true)' },
       },
-      required: ['project', 'path', 'content'],
+      required: ['project', 'path'],
+      oneOf: [
+        { required: ['content'] },
+        { required: ['contentBase64'] },
+      ],
       additionalProperties: false,
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
@@ -87,7 +92,7 @@ const TOOLS = [
   {
     name: 'ragmir_write_files_batch',
     title: 'Write Files (Batch)',
-    description: 'Write multiple files to a project at once. Efficient for bulk uploads. By default, automatically adds source patterns and runs ingestion so files are immediately searchable. Set autoIngest:false to skip.',
+    description: 'Write multiple files at once. Each file: use "content" for text, "contentBase64" for binary (.docx, .pdf, .xlsx, images). Auto-ingests by default.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -98,13 +103,14 @@ const TOOLS = [
             type: 'object',
             properties: {
               path: { type: 'string', minLength: 1 },
-              content: { type: 'string' },
+              content: { type: 'string', description: 'Text content' },
+              contentBase64: { type: 'string', minLength: 1, description: 'Base64-encoded binary content' },
             },
-            required: ['path', 'content'],
+            required: ['path'],
           },
-          description: 'Array of {path, content} objects',
+          description: 'Array of files — each needs content OR contentBase64',
         },
-        autoIngest: { type: 'boolean', description: 'Auto-add source patterns and ingest (default: true)' },
+        autoIngest: { type: 'boolean', description: 'Auto-run ingestion after write (default: true)' },
       },
       required: ['project', 'files'],
       additionalProperties: false,
@@ -155,23 +161,6 @@ const TOOLS = [
       additionalProperties: false,
     },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-  },
-  {
-    name: 'ragmir_upload_binary',
-    title: 'Upload Binary File',
-    description: 'Upload a binary file (PDF, DOCX, XLSX, PPTX, images, etc.) to a project. Pass base64-encoded content. Ragmir natively parses these formats during ingest. Do NOT try to extract text yourself — just upload the raw binary.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        project: { type: 'string', minLength: 1, maxLength: 100, description: 'Project name' },
-        path: { type: 'string', minLength: 1, description: 'Relative file path within the project (e.g. "docs/report.docx")' },
-        contentBase64: { type: 'string', minLength: 1, description: 'File content encoded as base64' },
-        autoIngest: { type: 'boolean', description: 'Auto-run ingestion after upload (default: true)' },
-      },
-      required: ['project', 'path', 'contentBase64'],
-      additionalProperties: false,
-    },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   {
     name: 'ragmir_add_sources',
@@ -381,15 +370,26 @@ const handlers = {
     return { content: [{ type: 'text', text: `Projects (${projects.length}):\n\n${lines.join('\n\n')}` }] };
   },
 
-  ragmir_write_file({ project, path: filePath, content, autoIngest }) {
+  ragmir_write_file({ project, path: filePath, content, contentBase64, autoIngest }) {
     const projectPath = getProjectPath(project);
     if (!fs.existsSync(projectPath)) throw new Error(`Project "${project}" not found`);
 
     const fullPath = path.join(projectPath, filePath);
     fs.mkdirSync(path.dirname(fullPath), { recursive: true });
-    fs.writeFileSync(fullPath, content, 'utf8');
 
-    let result = `Wrote ${content.length} bytes to ${filePath} in project "${project}"`;
+    let bytesWritten;
+    if (contentBase64) {
+      const buffer = Buffer.from(contentBase64, 'base64');
+      fs.writeFileSync(fullPath, buffer);
+      bytesWritten = buffer.length;
+    } else if (content !== undefined) {
+      fs.writeFileSync(fullPath, content, 'utf8');
+      bytesWritten = Buffer.byteLength(content, 'utf8');
+    } else {
+      throw new Error('Provide content (text) or contentBase64 (binary)');
+    }
+
+    let result = `Wrote ${bytesWritten} bytes to ${filePath} in project "${project}"`;
 
     if (autoIngest !== false) {
       try {
@@ -417,8 +417,16 @@ const handlers = {
     for (const file of files) {
       const fullPath = path.join(projectPath, file.path);
       fs.mkdirSync(path.dirname(fullPath), { recursive: true });
-      fs.writeFileSync(fullPath, file.content, 'utf8');
-      totalBytes += file.content.length;
+      if (file.contentBase64) {
+        const buffer = Buffer.from(file.contentBase64, 'base64');
+        fs.writeFileSync(fullPath, buffer);
+        totalBytes += buffer.length;
+      } else if (file.content !== undefined) {
+        fs.writeFileSync(fullPath, file.content, 'utf8');
+        totalBytes += Buffer.byteLength(file.content, 'utf8');
+      } else {
+        throw new Error(`File "${file.path}": provide content or contentBase64`);
+      }
       count++;
     }
 
@@ -471,29 +479,6 @@ const handlers = {
 
     fs.unlinkSync(fullPath);
     return { content: [{ type: 'text', text: `Deleted ${filePath} from project "${project}"` }] };
-  },
-
-  ragmir_upload_binary({ project, path: filePath, contentBase64, autoIngest }) {
-    const projectPath = getProjectPath(project);
-    if (!fs.existsSync(projectPath)) throw new Error(`Project "${project}" not found`);
-
-    const fullPath = path.join(projectPath, filePath);
-    fs.mkdirSync(path.dirname(fullPath), { recursive: true });
-    const buffer = Buffer.from(contentBase64, 'base64');
-    fs.writeFileSync(fullPath, buffer);
-
-    let result = `Uploaded ${buffer.length} bytes to ${filePath} in project "${project}"`;
-
-    if (autoIngest !== false) {
-      try {
-        const out = rgr('ingest', projectPath, 300000);
-        result += '\n\nIngested. Document is searchable.';
-      } catch (e) {
-        result += `\n\nIngest failed: ${e.message}. Run ragmir_ingest manually.`;
-      }
-    }
-
-    return { content: [{ type: 'text', text: result }] };
   },
 
   ragmir_add_sources({ project, patterns }) {
@@ -573,21 +558,22 @@ function handleRequest(req) {
       '',
       'WORKFLOW:',
       '1. ragmir_create_project — create a named project',
-      '2. ragmir_write_files_batch — upload text files (.py, .md, .js, etc.)',
-      '   ragmir_upload_binary — upload binary files (.docx, .pdf, .xlsx, .pptx, images)',
+      '2. ragmir_write_files_batch — upload files (text and binary in one call)',
       '3. ragmir_search / ragmir_ask / ragmir_research — query the knowledge base',
       '',
-      'Writing files auto-ingests them. They become searchable immediately.',
+      'Files auto-ingest and become searchable immediately.',
       '',
-      'BINARY FILES: Do NOT read or parse .docx/.pdf/.xlsx yourself.',
-      'Use ragmir_upload_binary with base64-encoded content.',
-      'Ragmir handles text extraction natively during ingest.',
+      'TEXT FILES: pass content as string.',
+      'BINARY FILES (.docx, .pdf, .xlsx, .pptx, images): pass contentBase64.',
+      'MCP transport is JSON — binary data MUST be base64-encoded by the MCP client.',
       '',
-      'Example (text file):',
-      '  → ragmir_write_files_batch(project="my-api", files=[{path:"src/main.py", content:"..."}])',
+      'Use these tools DIRECTLY — do NOT write shell scripts or curl commands.',
       '',
-      'Example (binary file):',
-      '  → ragmir_upload_binary(project="my-api", path:"docs/report.docx", contentBase64:"JVBER...")',
+      'Example (text):',
+      '  ragmir_write_files_batch(project="api", files=[{path:"main.py", content:"print()"}])',
+      '',
+      'Example (binary):',
+      '  ragmir_write_files_batch(project="api", files=[{path:"doc.pdf", contentBase64:"JVBER..."}])',
     ].join('\n'),
     });
     return;
