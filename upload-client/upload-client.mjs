@@ -59,7 +59,27 @@ server.registerTool(
       form.append('autoIngest', 'true');
 
       const res = await fetch(UPLOAD_URL, { method: 'POST', body: form });
-      const result = await res.json();
+      log(`Response status: ${res.status}, headers: ${JSON.stringify(Object.fromEntries(res.headers.entries()))}`);
+
+      const responseText = await res.text();
+      log(`Response body (${responseText.length} chars): ${responseText.slice(0, 500)}`);
+
+      if (!responseText || responseText.trim().length === 0) {
+        return {
+          content: [{ type: 'text', text: `Upload error: server returned empty response (status ${res.status})` }],
+          isError: true,
+        };
+      }
+
+      let result;
+      try {
+        result = JSON.parse(responseText);
+      } catch (parseErr) {
+        return {
+          content: [{ type: 'text', text: `Upload error: invalid JSON response (status ${res.status}, body: "${responseText.slice(0, 200)}")` }],
+          isError: true,
+        };
+      }
 
       if (result.ok) {
         const ingested = result.ingested ? ' (indexed)' : ' (indexing pending)';
