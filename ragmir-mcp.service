@@ -1,0 +1,15 @@
+[Unit]
+Description=Ragmir MCP Server (via mcpo)
+After=network.target
+
+[Service]
+Type=simple
+Environment=PATH=/usr/local/node22/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/local/bin/uvx mcpo --config /etc/ragmir/mcpo-config.json --port 8000 --api-key "CHANGE-ME"
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

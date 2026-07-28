@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "ragmir": {
+      "command": "node",
+      "args": ["/usr/local/lib/ragmir-server/server.js"],
+      "env": {
+        "RAGMIR_PROJECTS_DIR": "/opt/ragmir-projects"
+      }
+    }
+  }
+}
