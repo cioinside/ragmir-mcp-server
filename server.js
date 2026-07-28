@@ -70,13 +70,14 @@ const TOOLS = [
   {
     name: 'ragmir_write_file',
     title: 'Write File',
-    description: 'Write a file to a project directory. Creates parent dirs automatically. Overwrites existing files.',
+    description: 'Write a file to a project directory. Creates parent dirs automatically. Overwrites existing files. By default, automatically adds source patterns and runs ingestion so the file is immediately searchable. Set autoIngest:false to skip.',
     inputSchema: {
       type: 'object',
       properties: {
         project: { type: 'string', minLength: 1, maxLength: 100, description: 'Project name' },
         path: { type: 'string', minLength: 1, description: 'Relative file path within the project (e.g. "docs/README.md")' },
         content: { type: 'string', description: 'File content (text)' },
+        autoIngest: { type: 'boolean', description: 'Auto-add source patterns and ingest (default: true)' },
       },
       required: ['project', 'path', 'content'],
       additionalProperties: false,
@@ -86,7 +87,7 @@ const TOOLS = [
   {
     name: 'ragmir_write_files_batch',
     title: 'Write Files (Batch)',
-    description: 'Write multiple files to a project at once. Efficient for bulk uploads.',
+    description: 'Write multiple files to a project at once. Efficient for bulk uploads. By default, automatically adds source patterns and runs ingestion so files are immediately searchable. Set autoIngest:false to skip.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -103,6 +104,7 @@ const TOOLS = [
           },
           description: 'Array of {path, content} objects',
         },
+        autoIngest: { type: 'boolean', description: 'Auto-add source patterns and ingest (default: true)' },
       },
       required: ['project', 'files'],
       additionalProperties: false,
@@ -362,7 +364,7 @@ const handlers = {
     return { content: [{ type: 'text', text: `Projects (${projects.length}):\n\n${lines.join('\n\n')}` }] };
   },
 
-  ragmir_write_file({ project, path: filePath, content }) {
+  ragmir_write_file({ project, path: filePath, content, autoIngest }) {
     const projectPath = getProjectPath(project);
     if (!fs.existsSync(projectPath)) throw new Error(`Project "${project}" not found`);
 
@@ -370,12 +372,26 @@ const handlers = {
     fs.mkdirSync(path.dirname(fullPath), { recursive: true });
     fs.writeFileSync(fullPath, content, 'utf8');
 
-    return {
-      content: [{ type: 'text', text: `Wrote ${content.length} bytes to ${filePath} in project "${project}"` }],
-    };
+    let result = `Wrote ${content.length} bytes to ${filePath} in project "${project}"`;
+
+    if (autoIngest !== false) {
+      try {
+        const ext = path.extname(filePath).toLowerCase();
+        const extGlob = ext ? `**/*${ext}` : '';
+        if (extGlob) {
+          rgr(`sources add "${extGlob}"`, projectPath);
+        }
+        const out = rgr('ingest', projectPath, 300000);
+        result += '\n\nAuto-ingested. Index is ready for search.';
+      } catch (e) {
+        result += `\n\nAuto-ingest failed: ${e.message}. Run ragmir_ingest manually.`;
+      }
+    }
+
+    return { content: [{ type: 'text', text: result }] };
   },
 
-  ragmir_write_files_batch({ project, files }) {
+  ragmir_write_files_batch({ project, files, autoIngest }) {
     const projectPath = getProjectPath(project);
     if (!fs.existsSync(projectPath)) throw new Error(`Project "${project}" not found`);
 
@@ -389,9 +405,22 @@ const handlers = {
       count++;
     }
 
-    return {
-      content: [{ type: 'text', text: `Wrote ${count} files (${totalBytes} bytes) to project "${project}"` }],
-    };
+    let result = `Wrote ${count} files (${totalBytes} bytes) to project "${project}"`;
+
+    if (autoIngest !== false) {
+      try {
+        const exts = [...new Set(files.map(f => path.extname(f.path).toLowerCase()).filter(Boolean))];
+        for (const ext of exts) {
+          rgr(`sources add "**/*${ext}"`, projectPath);
+        }
+        const out = rgr('ingest', projectPath, 300000);
+        result += '\n\nAuto-ingested. Index is ready for search.';
+      } catch (e) {
+        result += `\n\nAuto-ingest failed: ${e.message}. Run ragmir_ingest manually.`;
+      }
+    }
+
+    return { content: [{ type: 'text', text: result }] };
   },
 
   ragmir_list_files({ project, subdirectory }) {
@@ -502,21 +531,20 @@ function handleRequest(req) {
       instructions: [
       'Ragmir Universal MCP Server — local RAG knowledge base.',
       '',
-      'WORKFLOW (follow this sequence):',
+      'WORKFLOW:',
       '1. ragmir_create_project — create a named project',
-      '2. ragmir_write_file or ragmir_write_files_batch — upload source files into the project',
-      '3. ragmir_add_sources — tell Ragmir which files to index (glob patterns like "**/*.py")',
-      '4. ragmir_ingest — build the vector index (run after writing files and adding sources)',
-      '5. ragmir_search / ragmir_ask / ragmir_research — query the indexed knowledge base',
+      '2. ragmir_write_file / ragmir_write_files_batch — upload source files (auto-ingests by default)',
+      '3. ragmir_search / ragmir_ask / ragmir_research — query the knowledge base',
+      '',
+      'Writing files automatically adds source patterns and runs ingestion.',
+      'Files become searchable immediately after the write call returns.',
+      'Set autoIngest:false on write tools to skip auto-ingest (manual control).',
       '',
       'Use these tools DIRECTLY — do NOT write shell scripts or curl commands.',
-      'Each tool is an MCP function call. Call it with the required arguments.',
       '',
-      'Example flow for indexing a codebase:',
+      'Example:',
       '  → ragmir_create_project(name="my-api")',
       '  → ragmir_write_files_batch(project="my-api", files=[{path:"src/main.py", content:"..."}])',
-      '  → ragmir_add_sources(project="my-api", patterns=["src/**/*.py", "docs/**/*.md"])',
-      '  → ragmir_ingest(project="my-api")',
       '  → ragmir_search(project="my-api", query="How does auth work?")',
     ].join('\n'),
     });
