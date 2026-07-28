@@ -33,7 +33,7 @@ server.registerTool(
     inputSchema: {
       project: z.string().describe('Project name on the Ragmir server (must already exist)'),
       path: z.string().describe('Relative path within the project where the file will be stored, e.g. "docs/report.docx"'),
-      localPath: z.string().describe('Absolute path to the local file on this machine, e.g. "C:\\\\Users\\\\user\\\\Documents\\\\report.docx" or "/home/user/file.pdf"'),
+      localPath: z.string().describe('Absolute path to the local file on this machine, e.g. "C:\\Users\\user\\Documents\\report.docx" or "/home/user/file.pdf"'),
     },
   },
   async ({ project, path: remotePath, localPath }) => {
@@ -59,7 +59,8 @@ server.registerTool(
       form.append('autoIngest', 'true');
 
       const res = await fetch(UPLOAD_URL, { method: 'POST', body: form });
-      log(`Response status: ${res.status}, headers: ${JSON.stringify(Object.fromEntries(res.headers.entries()))}`);
+      log(`POST ${UPLOAD_URL} → status ${res.status}`);
+      log(`Response content-type: ${res.headers.get('content-type')}`);
 
       const responseText = await res.text();
       log(`Response body (${responseText.length} chars): ${responseText.slice(0, 500)}`);
@@ -107,7 +108,7 @@ server.registerTool(
       'List files in a local directory (recursively). ' +
       'Useful for finding files to upload. Returns relative paths from the given directory.',
     inputSchema: {
-      directory: z.string().describe('Absolute path to the directory to list, e.g. "C:\\\\Users\\\\user\\\\Documents"'),
+      directory: z.string().describe('Absolute path to the directory to list, e.g. "C:\\Users\\user\\Documents"'),
       extensions: z.array(z.string()).optional().describe('Optional filter: only include files with these extensions, e.g. [".docx", ".pdf"]'),
     },
   },
@@ -151,6 +152,20 @@ server.registerTool(
 // ─── Start server ──────────────────────────────────────────────────────────
 
 log(`Started. Upload URL: ${UPLOAD_URL}`);
+log(`RAGMIR env: ${process.env.RAGMIR_UPLOAD_URL ? 'set' : 'NOT SET (using default)'}`);
+
+// Diagnostic: try to reach the upload server at startup
+(async () => {
+  try {
+    const baseUrl = UPLOAD_URL.replace(/\/upload$/, '');
+    const res = await fetch(baseUrl, { method: 'GET' });
+    const text = await res.text();
+    log(`Diagnostic GET ${baseUrl} → ${res.status} "${text.slice(0, 100)}"`);
+  } catch (e) {
+    log(`Diagnostic GET failed: ${e.message}`);
+    log(`Make sure the upload server is reachable at ${UPLOAD_URL}`);
+  }
+})();
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
