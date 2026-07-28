@@ -102,27 +102,61 @@ systemctl restart ragmir-mcp.service
 
 sleep 2
 if systemctl is-active --quiet ragmir-mcp.service; then
-  echo "Service: active ✓"
+  echo "Service (mcpo REST): active ✓"
 else
-  echo "Service: FAILED (check: journalctl -u ragmir-mcp)"
+  echo "Service (mcpo REST): FAILED (check: journalctl -u ragmir-mcp)"
   exit 1
+fi
+
+# --- SSE Gateway (for OpenCode/Claude/Cursor) ---
+SSE_PORT="${RAGMIR_SSE_PORT:-8001}"
+
+cat > /etc/systemd/system/ragmir-sse.service << SSEEOF
+[Unit]
+Description=Ragmir MCP SSE Gateway (supergateway)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=$(which npx 2>/dev/null || echo "/usr/local/node22/bin/npx") supergateway --stdio "node $INSTALL_DIR/server.js" --port $SSE_PORT
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+SSEEOF
+
+systemctl daemon-reload
+systemctl enable ragmir-sse.service
+systemctl restart ragmir-sse.service
+
+sleep 3
+if systemctl is-active --quiet ragmir-sse.service; then
+  echo "Service (SSE gateway): active ✓"
+else
+  echo "Service (SSE gateway): FAILED (check: journalctl -u ragmir-sse)"
 fi
 
 # Open firewall
 if command -v ufw &>/dev/null; then
   ufw allow "$PORT/tcp" 2>/dev/null || true
+  ufw allow "$SSE_PORT/tcp" 2>/dev/null || true
 fi
 
+SERVER_IP=$(hostname -I | awk '{print $1}')
 echo ""
 echo "=== Installation Complete ==="
 echo ""
-echo "Server URL:  http://$(hostname -I | awk '{print $1}'):$PORT/ragmir/"
-echo "OpenAPI docs: http://$(hostname -I | awk '{print $1}'):$PORT/ragmir/docs"
-echo "API Key:      $API_KEY"
+echo "REST/OpenAPI (Open WebUI): http://$SERVER_IP:$PORT/ragmir/"
+echo "SSE (OpenCode/Claude):    http://$SERVER_IP:$SSE_PORT"
+echo "OpenAPI docs:             http://$SERVER_IP:$PORT/ragmir/docs"
+echo "API Key:                  $API_KEY"
 echo ""
 echo "Management:"
-echo "  systemctl status ragmir-mcp"
-echo "  journalctl -u ragmir-mcp -f"
+echo "  systemctl status ragmir-mcp    # REST proxy"
+echo "  systemctl status ragmir-sse    # SSE gateway"
 echo ""
 echo "Remote OpenCode config (~/.config/opencode/opencode.jsonc):"
-echo "  \"ragmir\": { \"type\": \"remote\", \"url\": \"http://$(hostname -I | awk '{print $1}'):$PORT/ragmir\" }"
+echo "  \"ragmir\": { \"type\": \"remote\", \"url\": \"http://$SERVER_IP:$SSE_PORT\", \"enabled\": true }"

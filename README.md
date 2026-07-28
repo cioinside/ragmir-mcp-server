@@ -15,19 +15,23 @@ Remote AI agents (OpenCode, Claude, Cursor, etc.) can create projects, provide f
 ## Architecture
 
 ```
-[Remote Agent / OpenCode / Open WebUI]
-         │
-         │  HTTP REST (OpenAPI)
-         ▼
-    mcpo :8000 (MCP-to-OpenAPI proxy)
-         │
-         │  stdio (stdin/stdout)
-         ▼
-    ragmir-server.js
-         │
+[Remote Agent / OpenCode]                  [Open WebUI]
+         │                                       │
+         │  SSE (MCP transport)                  │  REST (OpenAPI)
+         ▼                                       ▼
+    supergateway :8001                     mcpo :8000
+         │                                       │
+         │  stdio (stdin/stdout)                 │  stdio
+         ▼                                       ▼
+    ragmir-server.js  ◄─── shared ───►   ragmir-server.js
+         │                                       │
          ├── rgr CLI (search, ingest, ask, research)
          └── /opt/ragmir-projects/ (project storage)
 ```
+
+Two ports, one server:
+- **Port 8001** — SSE transport (MCP protocol) for OpenCode, Claude, Cursor
+- **Port 8000** — REST/OpenAPI proxy (via mcpo) for Open WebUI
 
 ## Quick Install
 
@@ -223,7 +227,7 @@ Add to `~/.config/opencode/opencode.jsonc` on the remote PC:
   "mcp": {
     "ragmir": {
       "type": "remote",
-      "url": "http://192.168.1.100:8000/ragmir",
+      "url": "http://192.168.1.100:8001",
       "enabled": true
     }
   }
@@ -231,6 +235,8 @@ Add to `~/.config/opencode/opencode.jsonc` on the remote PC:
 ```
 
 Replace `192.168.1.100` with your server's IP.
+
+**Port 8001** serves the SSE transport that OpenCode expects. Port 8000 is REST/OpenAPI (for Open WebUI).
 
 ## Connecting from Open WebUI
 
