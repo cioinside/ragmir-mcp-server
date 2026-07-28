@@ -2,14 +2,14 @@
 // ragmir-upload-client — Local MCP stdio server for uploading files to Ragmir
 // Zero dependencies. Runs on user's machine (Windows/Mac/Linux).
 // Reads local files and POSTs them to the Ragmir upload server via HTTP.
+// Supports both Content-Length framing AND NDJSON (newline-delimited JSON).
 
-import { createInterface } from 'node:readline';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 const UPLOAD_URL = process.env.RAGMIR_UPLOAD_URL || 'http://192.168.1.226:8002/upload';
 const SERVER_INFO = { name: 'ragmir-upload', version: '1.0.0' };
-const PROTOCOL_VERSION = '2024-11-00';
+const PROTOCOL_VERSION = '2024-11-05';
 
 // ─── Tool definitions ─────────────────────────────────────────────────────
 
@@ -91,17 +91,14 @@ function log(...args) {
 // ─── Tool handlers ────────────────────────────────────────────────────────
 
 async function handleUpload({ project, path: remotePath, localPath }) {
-  // Validate
   if (!/^[a-zA-Z0-9._-]+$/.test(project)) {
     throw new Error(`Invalid project name: "${project}"`);
   }
 
-  // Read local file
   const fileBuffer = readFileSync(localPath);
   const fileName = localPath.split(/[/\\]/).pop();
   log(`Uploading ${fileName} (${fileBuffer.length} bytes) to ${project}/${remotePath}`);
 
-  // Build multipart/form-data using built-in FormData + Blob
   const form = new FormData();
   form.append('project', project);
   form.append('path', remotePath);
@@ -139,7 +136,6 @@ function handleListLocalFiles({ directory, extensions }) {
           const ext = '.' + entry.name.split('.').pop().toLowerCase();
           if (!extensions.some(e => e.toLowerCase() === ext)) continue;
         }
-        // Return path relative to the input directory
         files.push(full.slice(dir.length + 1) || entry.name);
       }
     }
@@ -155,12 +151,14 @@ async function handleMessage(msg) {
   const { id, method, params } = msg;
 
   if (method === 'initialize') {
+    // Echo back the protocolVersion the client sent (per MCP spec)
+    const clientVersion = params?.protocolVersion || PROTOCOL_VERSION;
     sendResponse(id, {
-      protocolVersion: PROTOCOL_VERSION,
+      protocolVersion: clientVersion,
       capabilities: { tools: {} },
       serverInfo: SERVER_INFO,
     });
-    log('Client connected:', JSON.stringify(params?.clientInfo));
+    log('Client connected:', JSON.stringify(params?.clientInfo), 'protocol:', clientVersion);
     return;
   }
 
@@ -209,39 +207,57 @@ async function handleMessage(msg) {
   }
 }
 
-// ─── Stdin reader (Content-Length framing) ────────────────────────────────
+// ─── Stdin reader (supports Content-Length framing AND NDJSON) ─────────────
 
 let inputBuffer = Buffer.alloc(0);
 
 function processBuffer() {
-  while (true) {
-    // Look for header separator
+  while (inputBuffer.length > 0) {
+    // Try Content-Length framing first
     const sepIdx = indexOfBuffer(inputBuffer, Buffer.from('\r\n\r\n'));
-    if (sepIdx === -1) break;
+    if (sepIdx !== -1) {
+      const header = inputBuffer.slice(0, sepIdx).toString('utf8');
+      const match = header.match(/Content-Length:\s*(\d+)/i);
+      if (match) {
+        const contentLen = parseInt(match[1], 10);
+        const bodyStart = sepIdx + 4;
+        if (inputBuffer.length < bodyStart + contentLen) break; // incomplete
 
-    const header = inputBuffer.slice(0, sepIdx).toString('utf8');
-    const match = header.match(/Content-Length:\s*(\d+)/i);
-    if (!match) {
-      log('Bad header, dropping:', header);
+        const body = inputBuffer.slice(bodyStart, bodyStart + contentLen).toString('utf8');
+        inputBuffer = inputBuffer.slice(bodyStart + contentLen);
+        dispatchMessage(body);
+        continue;
+      }
+      // Has \r\n\r\n but no Content-Length — skip past it
       inputBuffer = inputBuffer.slice(sepIdx + 4);
       continue;
     }
 
-    const contentLen = parseInt(match[1], 10);
-    const bodyStart = sepIdx + 4;
-    if (inputBuffer.length < bodyStart + contentLen) break; // incomplete body
-
-    const body = inputBuffer.slice(bodyStart, bodyStart + contentLen).toString('utf8');
-    inputBuffer = inputBuffer.slice(bodyStart + contentLen);
-
-    try {
-      const msg = JSON.parse(body);
-      handleMessage(msg).catch(e => {
-        log('Handler error:', e.message);
-      });
-    } catch (e) {
-      log('JSON parse error:', e.message);
+    // Try NDJSON: look for a complete line ending with \n
+    const nlIdx = inputBuffer.indexOf(0x0a); // \n
+    if (nlIdx !== -1) {
+      const line = inputBuffer.slice(0, nlIdx).toString('utf8').replace(/\r$/, '');
+      inputBuffer = inputBuffer.slice(nlIdx + 1);
+      if (line.trim()) {
+        dispatchMessage(line);
+      }
+      continue;
     }
+
+    // No complete message yet — wait for more data
+    break;
+  }
+}
+
+function dispatchMessage(body) {
+  try {
+    const msg = JSON.parse(body);
+    log('←', msg.method || `response:${msg.id}`, msg.params?.name || '');
+    handleMessage(msg).catch(e => {
+      log('Handler error:', e.message);
+    });
+  } catch (e) {
+    log('JSON parse error:', e.message, 'body:', body.slice(0, 200));
   }
 }
 
@@ -260,6 +276,11 @@ process.stdin.on('data', chunk => {
 process.stdin.on('end', () => {
   log('stdin closed, exiting');
   process.exit(0);
+});
+
+process.on('uncaughtException', (e) => {
+  log('Uncaught exception:', e.stack || e.message);
+  // Don't exit — keep the server alive
 });
 
 log(`Started. Upload URL: ${UPLOAD_URL}`);
