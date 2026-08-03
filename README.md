@@ -299,6 +299,64 @@ All backups go to `.ragmir-history/<relative-path>/<ISO-timestamp>.bak` inside t
 - **Diff versions:** `ragmir_diff_versions(project="my-kb", path="experience/task-001/note.yaml", versionA="2026-08-03T10-50-53-000Z.bak", versionB="current")`
 - **Restore:** `ragmir_restore_version(project="my-kb", path="experience/task-001/note.yaml", version="2026-08-03T10-50-53-000Z.bak")`
 
+## Multi-Agent Self-Improvement Protocol
+
+When multiple agents share a ragmir server, the **collective memory** is only as useful as the discipline that maintains it. The full protocol lives in [`MASIP.md`](./MASIP.md) — read it before contributing. This section is the executive summary.
+
+### Pre-task: search before you invent
+
+```
+ragmir_list_projects                            # only if uncertain which project
+ragmir_search(project, "<task-id> <question>", topK=5)
+```
+
+If the answer exists in ragmir, don't write a new record. If you find a better answer elsewhere, supersede (don't overwrite).
+
+### Post-task: curate, don't overwrite
+
+| Situation | Right tool |
+|---|---|
+| New finding in an existing record | `ragmir_append_file` (timestamp separator) |
+| Field-level edit | `ragmir_edit_file` (find/replace) |
+| Found a better approach entirely | `ragmir_supersede_note` — old record stays queryable with `status: superseded` + `superseded_by: <new path>` |
+| New type of problem solved | `ragmir_write_file` with **YAML frontmatter** (metadata is indexed, sidecar files are not) |
+| Identified wrong/outdated entry | `ragmir_edit_file` to set `status: incorrect`, never `ragmir_delete_file` (orphans chunks) |
+
+### Metadata standard (YAML frontmatter)
+
+Every knowledge record SHOULD include:
+
+```yaml
+---
+project_context: "task-001-auth-rotation"   # domain identifier
+environment: [prod, ci_cd]
+tech_stack: [nodejs, express, jwt]
+quality_score: 0-10                        # self-assessed
+version: "1.0"
+supersedes: ""                             # path of older record, if v2+
+agent_id: "your-agent-id"
+timestamp: "2026-08-03T12:30:00Z"
+---
+```
+
+Frontmatter is part of the indexed file body — `ragmir_search` will find it. Sidecar `note.meta.yaml` files are **not** indexed.
+
+### Cross-project hygiene
+
+- **One project per knowledge domain.** Don't mix `python-fastapi` and `kubernetes-deployments` — search quality degrades.
+- **Abstract patterns go to a dedicated project** (e.g. `patterns/` or `experience-records`). Include `source_project: <name>` in the frontmatter so provenance is queryable.
+- **Conflicting best practices:** keep both, distinguish via `context_scope` in frontmatter. Never delete the loser.
+
+### Verification after batch ops
+
+```
+ragmir_health_check(project="my-kb", deep=true)
+```
+
+Must report `staleInIndex=0, missingFromIndex=0, duplicateCandidates=0`. If not, do not paper over it.
+
+See [`MASIP.md`](./MASIP.md) for the full protocol with examples, anti-patterns, and tool mappings.
+
 ## Uploading Binary Files
 
 Text files (.py, .md, .js) → use `ragmir_write_files_batch` MCP tool.
