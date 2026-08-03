@@ -6,7 +6,7 @@ Remote AI agents (OpenCode, Claude, Cursor, etc.) can create projects, provide f
 
 ## Features
 
-- **21 MCP tools** — project management, file operations, indexing, search, knowledge accumulation
+- **22 MCP tools** — project management, file operations, indexing, search, knowledge accumulation, and hot-reload admin
 - **Remote access** — any agent on the LAN can use it via HTTP
 - **Multi-project** — unlimited projects, each with its own vector index
 - **OpenAPI docs** — auto-generated interactive docs at `/docs`
@@ -235,6 +235,7 @@ print(r.json())
 | `ragmir_restore_version` | Restore a file from a specific backup |
 | `ragmir_health_check` | Quick health summary (fast status or deep audit) |
 | `ragmir_delete_file` | Delete a file (now includes autoIngest to clean orphaned chunks) |
+| `ragmir_admin_reload_tools` | Notify all clients to re-fetch tools/list (MCP `notifications/tools/list_changed`). Also fires on `SIGHUP` to the server process. |
 
 ## Experience Accumulation Pattern
 

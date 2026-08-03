@@ -28,9 +28,42 @@ function sendNotification(method, params) {
   process.stdout.write(msg + '\n');
 }
 
+function notifyToolsChanged() {
+  sendNotification('notifications/tools/list_changed', {});
+}
+
+function registerTool(definition, handler) {
+  if (!definition || typeof definition.name !== 'string') {
+    throw new Error('registerTool: definition.name is required');
+  }
+  if (typeof handler !== 'function') {
+    throw new Error('registerTool: handler must be a function');
+  }
+  const idx = TOOLS.findIndex(t => t.name === definition.name);
+  if (idx >= 0) {
+    TOOLS[idx] = definition;
+  } else {
+    TOOLS.push(definition);
+  }
+  handlers[definition.name] = handler;
+  notifyToolsChanged();
+  process.stderr.write(`[ragmir] registered tool "${definition.name}" (total: ${TOOLS.length})\n`);
+  return TOOLS.length;
+}
+
+function unregisterTool(name) {
+  const idx = TOOLS.findIndex(t => t.name === name);
+  if (idx === -1) return false;
+  TOOLS.splice(idx, 1);
+  delete handlers[name];
+  notifyToolsChanged();
+  process.stderr.write(`[ragmir] unregistered tool "${name}" (total: ${TOOLS.length})\n`);
+  return true;
+}
+
 // ─── Tool Definitions ────────────────────────────────────────────────────
 
-const TOOLS = [
+let TOOLS = [
   {
     name: 'ragmir_create_project',
     title: 'Create Project',
@@ -397,6 +430,17 @@ const TOOLS = [
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
+  {
+    name: 'ragmir_admin_reload_tools',
+    title: 'Reload Tools (admin)',
+    description: 'Force connected MCP clients to re-fetch the tools list by emitting notifications/tools/list_changed. Use after server-side tool mutations, or to recover from a desynced client cache. Returns the currently registered tool names.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
 ];
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -443,7 +487,7 @@ function walkDir(dir, prefix = '') {
 
 // ─── Tool Handlers ───────────────────────────────────────────────────────
 
-const handlers = {
+let handlers = {
   ragmir_create_project({ name, description }) {
     const projectPath = getProjectPath(name);
     if (fs.existsSync(projectPath)) {
@@ -1047,6 +1091,17 @@ const handlers = {
 
     return { content: [{ type: 'text', text: summary }] };
   },
+
+  ragmir_admin_reload_tools() {
+    notifyToolsChanged();
+    const names = TOOLS.map(t => t.name).sort();
+    return {
+      content: [{
+        type: 'text',
+        text: `Sent notifications/tools/list_changed to all connected clients.\n\nCurrently registered: ${TOOLS.length} tools\n${names.join('\n')}\n\nClients honouring the MCP listChanged capability will re-call tools/list automatically.`,
+      }],
+    };
+  },
 };
 
 // ─── JSON-RPC Handler ────────────────────────────────────────────────────
@@ -1102,6 +1157,16 @@ function handleRequest(req) {
       '  * Use ragmir_restore_version to roll back if needed',
       '- VERIFICATION: ragmir_health_check (fast status) or with deep=true (full audit) after batch ops',
       '- All .ragmir-history/ backups are excluded from the ragmir index automatically (hidden directory).',
+      '',
+      '=== HOT RELOAD OF TOOL LIST ===',
+      'After server upgrades that add/change/remove tools, the MCP client normally only learns about',
+      'changes on reconnect. This server emits notifications/tools/list_changed (the MCP spec-compliant',
+      'mechanism) so MCP-compliant clients refresh their tool list without reconnecting.',
+      'Triggers:',
+      '  - ragmir_admin_reload_tools() MCP call — emits notification, returns sorted tool list',
+      '  - SIGHUP sent to the server process (kill -HUP <pid>) — emits notification, logs to stderr',
+      'Call ragmir_admin_reload_tools after server.js is upgraded and the process restarted, OR send',
+      'SIGHUP if you cannot call the tool (e.g. the upgrade changed the tool name itself).',
       '',
       'Do not announce "let me search" — just call the tool directly and use the result.',
     ].join('\n'),
@@ -1165,6 +1230,13 @@ rl.on('line', (line) => {
 });
 
 rl.on('close', () => process.exit(0));
+
+process.on('SIGHUP', () => {
+  notifyToolsChanged();
+  process.stderr.write(`[ragmir] SIGHUP received → notified ${TOOLS.length} tools\n`);
+});
+
+process.on('SIGTERM', () => process.exit(0));
 
 // Log to stderr (doesn't interfere with MCP stdio)
 process.stderr.write(`ragmir-universal MCP server started (projects: ${PROJECTS_DIR})\n`);
