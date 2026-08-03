@@ -153,12 +153,13 @@ const TOOLS = [
   {
     name: 'ragmir_delete_file',
     title: 'Delete File',
-    description: 'Delete a file from a project.',
+    description: 'Delete a file from a project. Auto-ingests by default (removes orphaned chunks from the vector index). Set autoIngest=false to skip ingestion.',
     inputSchema: {
       type: 'object',
       properties: {
         project: { type: 'string', minLength: 1, maxLength: 100, description: 'Project name' },
         path: { type: 'string', minLength: 1, description: 'Relative file path' },
+        autoIngest: { type: 'boolean', description: 'Auto-run ingestion after delete (default: true). Set false to skip.' },
       },
       required: ['project', 'path'],
       additionalProperties: false,
@@ -268,6 +269,133 @@ const TOOLS = [
       additionalProperties: false,
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+
+  // ─── Knowledge accumulation tools ──────────────────────────────────────
+
+  {
+    name: 'ragmir_append_file',
+    title: 'Append File',
+    description: 'Append text content to an existing file. Useful for adding new findings to an existing knowledge record. Auto-backs up and auto-ingests by default.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project: { type: 'string', minLength: 1, maxLength: 100, description: 'Project name' },
+        path: { type: 'string', minLength: 1, description: 'Relative file path' },
+        content: { type: 'string', description: 'Text to append' },
+        separator: { type: 'string', description: 'Separator before appended content (default: newline + --- + appended timestamp marker)' },
+        autoBackup: { type: 'boolean', description: 'Auto-backup before appending (default: true)' },
+        autoIngest: { type: 'boolean', description: 'Auto-run ingestion after append (default: true)' },
+      },
+      required: ['project', 'path', 'content'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: 'ragmir_edit_file',
+    title: 'Edit File',
+    description: 'Find/replace within a file. Useful for updating a specific field in a knowledge record. Auto-backs up and auto-ingests by default.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project: { type: 'string', minLength: 1, maxLength: 100, description: 'Project name' },
+        path: { type: 'string', minLength: 1, description: 'Relative file path' },
+        find: { type: 'string', description: 'Literal string to find' },
+        replace: { type: 'string', description: 'Replacement text' },
+        replaceAll: { type: 'boolean', description: 'Replace all occurrences (default: false)' },
+        autoBackup: { type: 'boolean', description: 'Auto-backup before editing (default: true)' },
+        autoIngest: { type: 'boolean', description: 'Auto-run ingestion after edit (default: true)' },
+      },
+      required: ['project', 'path', 'find', 'replace'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: 'ragmir_supersede_note',
+    title: 'Supersede Note',
+    description: 'Mark an old knowledge record as superseded and create a new one that references it. Preserves history. Auto-backs up and auto-ingests by default.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project: { type: 'string', minLength: 1, maxLength: 100, description: 'Project name' },
+        oldPath: { type: 'string', minLength: 1, description: 'Path to existing record to supersede' },
+        newPath: { type: 'string', minLength: 1, description: 'Path for the new record' },
+        newContent: { type: 'string', description: 'Content of the new record' },
+        reason: { type: 'string', description: 'Short explanation (e.g. "found better method via X")' },
+        autoBackup: { type: 'boolean', description: 'Auto-backup before superseding (default: true)' },
+        autoIngest: { type: 'boolean', description: 'Auto-run ingestion after superseding (default: true)' },
+      },
+      required: ['project', 'oldPath', 'newPath', 'newContent'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: 'ragmir_list_history',
+    title: 'List History',
+    description: 'List all backup versions of a file from .ragmir-history/.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project: { type: 'string', minLength: 1, maxLength: 100, description: 'Project name' },
+        path: { type: 'string', minLength: 1, description: 'File whose history to list' },
+      },
+      required: ['project', 'path'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'ragmir_diff_versions',
+    title: 'Diff Versions',
+    description: 'Show diff between two versions of a file (or current vs backup).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project: { type: 'string', minLength: 1, maxLength: 100, description: 'Project name' },
+        path: { type: 'string', minLength: 1, description: 'File path' },
+        versionA: { type: 'string', description: 'First version ("current" or backup filename). Default: most recent backup.' },
+        versionB: { type: 'string', description: 'Second version ("current" or backup filename). Default: "current".' },
+      },
+      required: ['project', 'path'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'ragmir_restore_version',
+    title: 'Restore Version',
+    description: 'Restore a file from a specific backup. Auto-backs up current version before overwriting.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project: { type: 'string', minLength: 1, maxLength: 100, description: 'Project name' },
+        path: { type: 'string', minLength: 1, description: 'File path to restore' },
+        version: { type: 'string', minLength: 1, description: 'Backup filename to restore from' },
+        autoBackup: { type: 'boolean', description: 'Backup current version before overwriting (default: true)' },
+        autoIngest: { type: 'boolean', description: 'Auto-run ingestion after restore (default: true)' },
+      },
+      required: ['project', 'path', 'version'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: 'ragmir_health_check',
+    title: 'Health Check',
+    description: 'Quick health summary of a project index vs source files. Fast (status) or deep (full audit).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project: { type: 'string', minLength: 1, maxLength: 100, description: 'Project name' },
+        deep: { type: 'boolean', description: 'Run full audit (slower, O(corpus)) (default: false)' },
+      },
+      required: ['project'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
 ];
 
@@ -484,13 +612,24 @@ const handlers = {
     return { content: [{ type: 'text', text: content }] };
   },
 
-  ragmir_delete_file({ project, path: filePath }) {
+  ragmir_delete_file({ project, path: filePath, autoIngest }) {
     const projectPath = getProjectPath(project);
     const fullPath = path.join(projectPath, filePath);
     if (!fs.existsSync(fullPath)) throw new Error(`File not found: ${filePath}`);
 
     fs.unlinkSync(fullPath);
-    return { content: [{ type: 'text', text: `Deleted ${filePath} from project "${project}"` }] };
+    let result = `Deleted ${filePath} from project "${project}"`;
+
+    if (autoIngest !== false) {
+      try {
+        const out = rgr('ingest', projectPath, 300000);
+        result += '\n\nAuto-ingested. Orphaned chunks cleaned up.';
+      } catch (e) {
+        result += `\n\nAuto-ingest failed: ${e.message}. Run ragmir_ingest manually.`;
+      }
+    }
+
+    return { content: [{ type: 'text', text: result }] };
   },
 
   ragmir_add_sources({ project, patterns }) {
@@ -553,6 +692,361 @@ const handlers = {
     const out = rgr(`research "${query.replace(/"/g, '\\"')}" ${kArg}`, projectPath, 120000);
     return { content: [{ type: 'text', text: out || 'No results found.' }] };
   },
+
+  // ─── Knowledge accumulation handlers ───────────────────────────────────
+
+  _backupFile(fullPath, historyBase) {
+    const rel = path.relative(PROJECTS_DIR, fullPath);
+    const relDir = path.dirname(rel);
+    const projectName = path.basename(historyBase);
+    const projectPrefix = projectName + path.sep;
+    let subPath;
+    if (relDir === projectName) {
+      subPath = '';
+    } else if (relDir.startsWith(projectPrefix)) {
+      subPath = relDir.slice(projectPrefix.length);
+    } else {
+      subPath = relDir;
+    }
+    const historyDir = path.join(historyBase, '.ragmir-history', subPath);
+    fs.mkdirSync(historyDir, { recursive: true });
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    const bakPath = path.join(historyDir, `${ts}.bak`);
+    fs.copyFileSync(fullPath, bakPath);
+    return bakPath;
+  },
+
+  ragmir_append_file({ project, path: filePath, content, separator, autoBackup, autoIngest }) {
+    const projectPath = getProjectPath(project);
+    if (!fs.existsSync(projectPath)) throw new Error(`Project "${project}" not found`);
+    const fullPath = path.join(projectPath, filePath);
+    if (!fs.existsSync(fullPath)) throw new Error(`File not found: ${filePath}`);
+
+    const defaultSep = '\n\n---\n## Appended: ' + new Date().toISOString() + '\n\n';
+    const sep = separator || defaultSep;
+    const existing = fs.readFileSync(fullPath, 'utf8');
+    const bytesBefore = Buffer.byteLength(existing, 'utf8');
+
+    let bakPath = null;
+    if (autoBackup !== false) {
+      bakPath = this._backupFile(fullPath, projectPath);
+    }
+
+    fs.writeFileSync(fullPath, existing + sep + content, 'utf8');
+    const bytesAppended = Buffer.byteLength(content, 'utf8');
+
+    let result = `Appended ${bytesAppended} bytes to ${filePath} in project "${project}"`;
+    if (bakPath) result += `\nBackup: ${bakPath.replace(PROJECTS_DIR + '/', '')}`;
+
+    if (autoIngest !== false) {
+      try {
+        rgr('ingest', projectPath, 300000);
+        result += '\nAuto-ingested.';
+      } catch (e) {
+        result += `\nAuto-ingest failed: ${e.message}`;
+      }
+    }
+
+    return { content: [{ type: 'text', text: result }] };
+  },
+
+  ragmir_edit_file({ project, path: filePath, find, replace, replaceAll, autoBackup, autoIngest }) {
+    const projectPath = getProjectPath(project);
+    if (!fs.existsSync(projectPath)) throw new Error(`Project "${project}" not found`);
+    const fullPath = path.join(projectPath, filePath);
+    if (!fs.existsSync(fullPath)) throw new Error(`File not found: ${filePath}`);
+
+    let content = fs.readFileSync(fullPath, 'utf8');
+    const count = (content.split(find).length - 1);
+
+    if (count === 0) {
+      throw new Error(`"${find}" not found in ${filePath}`);
+    }
+
+    if (!replaceAll && count > 1) {
+      throw new Error(`Found ${count} occurrences of "${find}", use replaceAll=true to replace all`);
+    }
+
+    let bakPath = null;
+    if (autoBackup !== false) {
+      bakPath = this._backupFile(fullPath, projectPath);
+    }
+
+    if (replaceAll) {
+      content = content.split(find).join(replace);
+    } else {
+      content = content.replace(find, replace);
+    }
+
+    fs.writeFileSync(fullPath, content, 'utf8');
+
+    let result = `Replaced ${count} occurrence${count > 1 ? 's' : ''} of "${find}" with "${replace}" in ${filePath}`;
+    if (bakPath) result += `\nBackup: ${bakPath.replace(PROJECTS_DIR + '/', '')}`;
+
+    if (autoIngest !== false) {
+      try {
+        rgr('ingest', projectPath, 300000);
+        result += '\nAuto-ingested.';
+      } catch (e) {
+        result += `\nAuto-ingest failed: ${e.message}`;
+      }
+    }
+
+    return { content: [{ type: 'text', text: result }] };
+  },
+
+  ragmir_supersede_note({ project, oldPath, newPath, newContent, reason, autoBackup, autoIngest }) {
+    const projectPath = getProjectPath(project);
+    if (!fs.existsSync(projectPath)) throw new Error(`Project "${project}" not found`);
+    const oldFull = path.join(projectPath, oldPath);
+    if (!fs.existsSync(oldFull)) throw new Error(`File not found: ${oldPath}`);
+
+    let oldContent = fs.readFileSync(oldFull, 'utf8');
+    const ext = path.extname(oldPath).toLowerCase();
+    const iso = new Date().toISOString().replace(/[:.]/g, '-');
+    let bakPath = null;
+
+    if (autoBackup !== false) {
+      bakPath = this._backupFile(oldFull, projectPath);
+    }
+
+    if (typeof newContent !== 'string') {
+      throw new Error('newContent is required and must be a string');
+    }
+
+    if (ext === '.json') {
+      try {
+        const obj = JSON.parse(oldContent);
+        obj.status = 'superseded';
+        obj.superseded_by = newPath;
+        obj.superseded_at = iso;
+        if (reason) obj.superseded_reason = reason;
+        oldContent = JSON.stringify(obj, null, 2);
+      } catch (e) {
+        oldContent = `<!-- superseded: ${iso}; superseded_by: ${newPath}; reason: ${reason || 'none'} -->\n\n` + oldContent;
+      }
+    } else if (ext === '.yaml' || ext === '.yml') {
+      const lines = oldContent.split('\n');
+      let statusUpdated = false, supByUpdated = false;
+      for (let i = 0; i < lines.length; i++) {
+        if (!statusUpdated && /^status:\s*/.test(lines[i])) {
+          lines[i] = 'status: superseded';
+          statusUpdated = true;
+          continue;
+        }
+        if (!supByUpdated && /^superseded_by:\s*/.test(lines[i])) {
+          lines[i] = `superseded_by: ${newPath}`;
+          supByUpdated = true;
+          continue;
+        }
+      }
+      const prepend = [];
+      if (reason) prepend.push(`reason: ${reason}`);
+      if (!supByUpdated) prepend.push(`superseded_by: ${newPath}`);
+      if (!statusUpdated) prepend.push('status: superseded');
+      oldContent = prepend.concat(lines).join('\n');
+    } else {
+      oldContent = `<!-- superseded: ${iso}; superseded_by: ${newPath}; reason: ${reason || 'none'} -->\n\n` + oldContent;
+    }
+
+    fs.writeFileSync(oldFull, oldContent, 'utf8');
+
+    // Write new file
+    const newFull = path.join(projectPath, newPath);
+    fs.mkdirSync(path.dirname(newFull), { recursive: true });
+    fs.writeFileSync(newFull, newContent, 'utf8');
+
+    let result = `Superseded ${oldPath} → ${newPath}\nReason: ${reason || 'none'}\nBackup: ${bakPath ? bakPath.replace(PROJECTS_DIR + '/', '') : 'none'}`;
+
+    if (autoIngest !== false) {
+      try {
+        rgr('ingest', projectPath, 300000);
+        result += '\nAuto-ingested.';
+      } catch (e) {
+        result += `\nAuto-ingest failed: ${e.message}`;
+      }
+    }
+
+    return { content: [{ type: 'text', text: result }] };
+  },
+
+  ragmir_list_history({ project, path: filePath }) {
+    const projectPath = getProjectPath(project);
+    if (!fs.existsSync(projectPath)) throw new Error(`Project "${project}" not found`);
+
+    const historyDir = path.join(projectPath, '.ragmir-history', path.dirname(filePath));
+    if (!fs.existsSync(historyDir)) {
+      return { content: [{ type: 'text', text: `No history found for ${filePath}` }] };
+    }
+
+    const files = fs.readdirSync(historyDir).filter(f => f.endsWith('.bak')).sort().reverse();
+    if (files.length === 0) {
+      return { content: [{ type: 'text', text: `No backup versions for ${filePath}` }] };
+    }
+
+    const lines = files.map(f => {
+      const stat = fs.statSync(path.join(historyDir, f));
+      const ts = f.replace('.bak', '');
+      return `  ${f} — ${stat.size} bytes — ${ts}`;
+    });
+
+    return { content: [{ type: 'text', text: `History for ${filePath} (${files.length} versions):\n\n${lines.join('\n')}` }] };
+  },
+
+  ragmir_diff_versions({ project, path: filePath, versionA, versionB }) {
+    const projectPath = getProjectPath(project);
+    if (!fs.existsSync(projectPath)) throw new Error(`Project "${project}" not found`);
+
+    const historyDir = path.join(projectPath, '.ragmir-history', path.dirname(filePath));
+    const bakFiles = fs.existsSync(historyDir) ? fs.readdirSync(historyDir).filter(f => f.endsWith('.bak')).sort().reverse() : [];
+
+    function resolveVersion(ver) {
+      if (ver === 'current') return { type: 'current', path: path.join(projectPath, filePath) };
+      // It's a backup filename
+      const bakPath = path.join(historyDir, ver);
+      if (!fs.existsSync(bakPath)) throw new Error(`Version not found: ${ver}`);
+      return { type: 'backup', path: bakPath, name: ver };
+    }
+
+    const vA = resolveVersion(versionA || (bakFiles.length > 0 ? bakFiles[0] : null));
+    const vB = resolveVersion(versionB || 'current');
+
+    let contentA, contentB;
+    if (vA.type === 'current') contentA = fs.readFileSync(vA.path, 'utf8');
+    else contentA = fs.readFileSync(vA.path, 'utf8');
+    if (vB.type === 'current') contentB = fs.readFileSync(vB.path, 'utf8');
+    else contentB = fs.readFileSync(vB.path, 'utf8');
+
+    if (contentA === contentB) {
+      return { content: [{ type: 'text', text: 'No differences.' }] };
+    }
+
+    // Simple line-based unified diff
+    const linesA = contentA.split('\n');
+    const linesB = contentB.split('\n');
+    const labelA = vA.type === 'current' ? 'current' : vA.name;
+    const labelB = vB.type === 'current' ? 'current' : vB.name;
+
+    // Determine which is older
+    let olderLabel = labelA, newerLabel = labelB;
+    if (vA.type === 'current' && vB.type === 'backup') {
+      olderLabel = labelB;
+      newerLabel = labelA;
+    } else if (vA.type === 'backup' && vB.type === 'current') {
+      olderLabel = labelA;
+      newerLabel = labelB;
+    }
+
+    // LCS-based diff
+    const m = linesA.length, n = linesB.length;
+    const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+    for (let i = 1; i <= m; i++) {
+      for (let j = 1; j <= n; j++) {
+        if (linesA[i - 1] === linesB[j - 1]) dp[i][j] = dp[i - 1][j - 1] + 1;
+        else dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+      }
+    }
+
+    // Backtrack to find diff
+    const diffs = [];
+    let i = m, j = n;
+    while (i > 0 || j > 0) {
+      if (i > 0 && j > 0 && linesA[i - 1] === linesB[j - 1]) {
+        diffs.unshift({ type: ' ', lineA: i, lineB: j, text: linesA[i - 1] });
+        i--; j--;
+      } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+        diffs.unshift({ type: '+', lineB: j, text: linesB[j - 1] });
+        j--;
+      } else {
+        diffs.unshift({ type: '-', lineA: i, text: linesA[i - 1] });
+        i--;
+      }
+    }
+
+    let output = `--- ${olderLabel}\n+++ ${newerLabel}\n`;
+    for (const d of diffs) {
+      if (d.type === ' ') {
+        output += ` ${d.text}\n`;
+      } else if (d.type === '-') {
+        output += `-${d.text}\n`;
+      } else {
+        output += `+${d.text}\n`;
+      }
+    }
+
+    return { content: [{ type: 'text', text: output }] };
+  },
+
+  ragmir_restore_version({ project, path: filePath, version, autoBackup, autoIngest }) {
+    const projectPath = getProjectPath(project);
+    if (!fs.existsSync(projectPath)) throw new Error(`Project "${project}" not found`);
+
+    const historyDir = path.join(projectPath, '.ragmir-history', path.dirname(filePath));
+    const bakPath = path.join(historyDir, version);
+    if (!fs.existsSync(bakPath)) throw new Error(`Backup not found: ${version}`);
+
+    const currentFull = path.join(projectPath, filePath);
+
+    let bakNow = null;
+    if (autoBackup !== false && fs.existsSync(currentFull)) {
+      bakNow = this._backupFile(currentFull, projectPath);
+    }
+
+    const restored = fs.readFileSync(bakPath, 'utf8');
+    fs.mkdirSync(path.dirname(currentFull), { recursive: true });
+    fs.writeFileSync(currentFull, restored, 'utf8');
+    const size = Buffer.byteLength(restored, 'utf8');
+
+    let result = `Restored ${filePath} from ${version} (${size} bytes)\nBackup of current: ${bakNow ? bakNow.replace(PROJECTS_DIR + '/', '') : 'none'}`;
+
+    if (autoIngest !== false) {
+      try {
+        rgr('ingest', projectPath, 300000);
+        result += '\nAuto-ingested.';
+      } catch (e) {
+        result += `\nAuto-ingest failed: ${e.message}`;
+      }
+    }
+
+    return { content: [{ type: 'text', text: result }] };
+  },
+
+  ragmir_health_check({ project, deep }) {
+    const projectPath = getProjectPath(project);
+    if (!fs.existsSync(projectPath)) throw new Error(`Project "${project}" not found`);
+
+    const hasRagmir = fs.existsSync(path.join(projectPath, '.ragmir'));
+    const files = walkDir(projectPath);
+    const lastActivity = files.length > 0
+      ? files.map(f => fs.statSync(path.join(projectPath, f.path)).mtime)
+          .sort((a, b) => b - a)[0]
+      : 'N/A';
+
+    let statusOut = rgr('status', projectPath);
+    let summary = `=== Health Check: ${project} ===\n`;
+    summary += `Project exists: yes\n`;
+    summary += `.ragmir initialized: ${hasRagmir ? 'yes' : 'NO'}\n`;
+    summary += `Files: ${files.length}\n`;
+    summary += `Last activity: ${lastActivity}\n\n`;
+    summary += `--- Status ---\n${statusOut}\n`;
+
+    if (deep) {
+      const auditOut = rgr('audit', projectPath);
+      summary += `\n--- Audit (deep) ---\n${auditOut}\n`;
+    }
+
+    // Parse status for color coding
+    const hasChunks = statusOut.includes('chunksIndexed') || statusOut.includes('chunks');
+    if (hasRagmir && hasChunks) {
+      summary += `\n✅ Health: OK\n`;
+    } else if (!hasRagmir) {
+      summary += `\n❌ Health: Project not initialized\n`;
+    } else {
+      summary += `\n⚠️  Health: No chunks indexed\n`;
+    }
+
+    return { content: [{ type: 'text', text: summary }] };
+  },
 };
 
 // ─── JSON-RPC Handler ────────────────────────────────────────────────────
@@ -591,6 +1085,23 @@ function handleRequest(req) {
       'BINARY FILES (.docx, .pdf, .xlsx, .pptx, images): use the upload_to_ragmir tool from the ragmir-upload MCP server.',
       '  Example: upload_to_ragmir(project="myproject", path="docs/report.docx", localPath="C:\\Users\\user\\Documents\\report.docx")',
       '  It reads the local file and uploads it automatically. NEVER write code or shell commands for this — just call the tool.',
+      '',
+      '=== KNOWLEDGE ACCUMULATION (Experience Records) ===',
+      'For agents that want to accumulate and update experience over time:',
+      '- DESIGN: one knowledge record = one small file (2-10 KB). Records can be YAML, JSON, or Markdown.',
+      '- STRUCTURE: use a folder like `experience/<task-id>/note.yaml` so each record has a clean path.',
+      '- LIFECYCLE:',
+      '  * Create: ragmir_write_file (new record)',
+      '  * Add findings to existing record: ragmir_append_file (with timestamp separator)',
+      '  * Update a specific field: ragmir_edit_file (find/replace)',
+      '  * Found a better method? ragmir_supersede_note — preserves old + links to new',
+      '- SAFETY:',
+      '  * Every write/edit/append/delete auto-backs up to .ragmir-history/ BEFORE the operation',
+      '  * Every mutation auto-triggers rgr ingest (incremental — only the changed file is re-embedded)',
+      '  * Use ragmir_list_history + ragmir_diff_versions to review before destructive ops',
+      '  * Use ragmir_restore_version to roll back if needed',
+      '- VERIFICATION: ragmir_health_check (fast status) or with deep=true (full audit) after batch ops',
+      '- All .ragmir-history/ backups are excluded from the ragmir index automatically (hidden directory).',
       '',
       'Do not announce "let me search" — just call the tool directly and use the result.',
     ].join('\n'),
