@@ -6,7 +6,7 @@ Remote AI agents (OpenCode, Claude, Cursor, etc.) can create projects, provide f
 
 ## Features
 
-- **14 MCP tools** — project management, file operations, indexing, search
+- **21 MCP tools** — project management, file operations, indexing, search, knowledge accumulation
 - **Remote access** — any agent on the LAN can use it via HTTP
 - **Multi-project** — unlimited projects, each with its own vector index
 - **OpenAPI docs** — auto-generated interactive docs at `/docs`
@@ -222,6 +222,82 @@ print(r.json())
 | `ragmir_search` | Search with citations |
 | `ragmir_ask` | Get context for a question (no LLM) |
 | `ragmir_research` | Multi-query research |
+
+### Knowledge Accumulation
+
+| Tool | Description |
+|---|---|
+| `ragmir_append_file` | Append text to an existing file (auto-backup + auto-ingest) |
+| `ragmir_edit_file` | Find/replace within a file (auto-backup + auto-ingest) |
+| `ragmir_supersede_note` | Mark old record as superseded, create new one (preserves history) |
+| `ragmir_list_history` | List all backup versions of a file |
+| `ragmir_diff_versions` | Show diff between two file versions |
+| `ragmir_restore_version` | Restore a file from a specific backup |
+| `ragmir_health_check` | Quick health summary (fast status or deep audit) |
+| `ragmir_delete_file` | Delete a file (now includes autoIngest to clean orphaned chunks) |
+
+## Experience Accumulation Pattern
+
+For agents that want to accumulate and update knowledge records over time:
+
+### Design Rationale
+
+Each knowledge record is a **single small file** (2-10 KB). Records can be YAML, JSON, or Markdown. This keeps the system simple, editable by any agent, and easy to version-control.
+
+### Folder Layout
+
+```
+experience/
+  task-001-auth-implementation/
+    note.yaml        # Primary record
+    note-v2.yaml     # Superseded by note.yaml (via supersede)
+  task-002-payment/
+    note.md
+```
+
+### Lifecycle Workflow
+
+| Action | Tool |
+|---|---|
+| Create a new record | `ragmir_write_file` |
+| Add findings to existing record | `ragmir_append_file` (with timestamp separator) |
+| Update a specific field | `ragmir_edit_file` (find/replace) |
+| Found a better method? | `ragmir_supersede_note` — preserves old + links to new |
+
+### Safety Guarantees
+
+- Every write/edit/append/delete **auto-backs up** to `.ragmir-history/` BEFORE the operation
+- Every mutation **auto-triggers** `rgr ingest` (incremental — only the changed file is re-embedded)
+- Use `ragmir_list_history` + `ragmir_diff_versions` to review before destructive ops
+- Use `ragmir_restore_version` to roll back if needed
+
+### Example: Append a Finding, Then Supersede
+
+```bash
+# 1. Create initial record
+curl -s -X POST http://localhost:8000/ragmir/ragmir_write_file \
+  -d '{"project":"my-kb","path":"experience/task-001/note.yaml","content":"# Auth\nmethod: JWT\n"}'
+
+# 2. Append a finding
+curl -s -X POST http://localhost:8000/ragmir/ragmir_append_file \
+  -d '{"project":"my-kb","path":"experience/task-001/note.yaml","content":"## Finding\nAdd rate limiting."}'
+
+# 3. Found a better method — supersede
+curl -s -X POST http://localhost:8000/ragmir/ragmir_supersede_note \
+  -d '{"project":"my-kb","oldPath":"experience/task-001/note.yaml","newPath":"experience/task-001/note-v2.yaml","newContent":"# Auth\nmethod: OAuth2\n","reason":"OAuth2 more secure than JWT"}'
+
+# 4. Verify health
+curl -s -X POST http://localhost:8000/ragmir/ragmir_health_check \
+  -d '{"project":"my-kb","deep":true}'
+```
+
+### History & Backup
+
+All backups go to `.ragmir-history/<relative-path>/<ISO-timestamp>.bak` inside the project directory. The `.ragmir-history` directory is hidden (dot-prefixed) so it's excluded from the ragmir index.
+
+- **List backups:** `ragmir_list_history(project="my-kb", path="experience/task-001/note.yaml")`
+- **Diff versions:** `ragmir_diff_versions(project="my-kb", path="experience/task-001/note.yaml", versionA="2026-08-03T10-50-53-000Z.bak", versionB="current")`
+- **Restore:** `ragmir_restore_version(project="my-kb", path="experience/task-001/note.yaml", version="2026-08-03T10-50-53-000Z.bak")`
 
 ## Uploading Binary Files
 
