@@ -3,5 +3,6 @@ node_modules/
 .env
 .env.*
 
-# OpenCode planner artifacts (per-session state)
+# OpenCode per-session state (planner artifacts, local cache).
 .omo/
+.local/

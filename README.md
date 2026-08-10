@@ -544,6 +544,57 @@ curl -X POST http://localhost:8000/ragmir/ragmir_create_project \
   -d '{"name":"my-project"}'
 ```
 
+## Known upstream issues
+
+The MCP server delegates to the global `@jcode.labs/ragmir` package. Issues in
+that package that affect this server are tracked here.
+
+### `rgr ingest` silently fails on every PDF
+
+**Symptom.** `rgr ingest` exits 0 but every PDF emits
+`Parsing: pdf.destroy is not a function`; the per-file `errors` counter in
+the run summary increments.
+
+**Cause.** Upstream `packages/ragmir-core/src/parsing.ts:686` calls
+`await pdf.destroy()` unconditionally in a `finally` block. `unpdf@1.8.0`
+removed `PDFDocumentProxy.destroy()` from the returned proxy. Upstream
+`packages/ragmir-core/package.json` declares `"unpdf": "^1.4.0"`, which
+allowed the breaking bump. Verified at runtime:
+
+- `unpdf@1.6.2` — `typeof pdf.destroy === 'function'`, `await pdf.destroy()`
+  resolves cleanly.
+- `unpdf@1.8.0` — `typeof pdf.destroy === 'undefined'`, calling it throws
+  `pdf.destroy is not a function`.
+
+**Reported.** https://github.com/jcode-works/jcode-ragmir/issues/158
+
+**Workaround.** Apply the local one-line patch via the idempotent script:
+
+```bash
+scripts/apply-rgr-pdf-patch.sh
+```
+
+The script wraps the call in a type guard:
+
+```diff
+-        await pdf.destroy();
++        if (typeof pdf.destroy === "function") await pdf.destroy();
+```
+
+It is idempotent (running it again is a no-op) and runs automatically as
+the `postinstall` hook of this repo (`package.json`). If upstream ships a fix
+(pin to `unpdf ~1.6.x` or a defensive guard in `parsing.ts`), restore the
+original file and delete the script:
+
+```bash
+# List backups
+ls /usr/local/node22/lib/node_modules/@jcode.labs/ragmir/dist/parsing.js.bak.*
+
+# Restore
+cp /usr/local/node22/lib/node_modules/@jcode.labs/ragmir/dist/parsing.js.bak.<timestamp> \
+   /usr/local/node22/lib/node_modules/@jcode.labs/ragmir/dist/parsing.js
+```
+
 ## License
 
 MIT

@@ -1,0 +1,23 @@
+{
+  "name": "ragmir-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server wrapping the @jcode.labs/ragmir CLI. CommonJS, single-file server.js, stdio JSON-RPC.",
+  "main": "server.js",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "postinstall": "bash scripts/apply-rgr-pdf-patch.sh || true"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ragmir",
+    "rag",
+    "local-rag"
+  ],
+  "license": "MIT",
+  "dependencies": {}
+}
