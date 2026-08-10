@@ -6,7 +6,7 @@ Remote AI agents (OpenCode, Claude, Cursor, etc.) can create projects, provide f
 
 ## Features
 
-- **22 MCP tools** — project management, file operations, indexing, search, knowledge accumulation, and hot-reload admin
+- **23 MCP tools** — project management, file operations, indexing, search (single-project + cross-project), knowledge accumulation, and hot-reload admin
 - **Remote access** — any agent on the LAN can use it via HTTP
 - **Multi-project** — unlimited projects, each with its own vector index
 - **OpenAPI docs** — auto-generated interactive docs at `/docs`
@@ -219,7 +219,8 @@ print(r.json())
 |---|---|
 | `ragmir_add_sources` | Add glob patterns for indexing |
 | `ragmir_ingest` | Run ingestion (after adding files) |
-| `ragmir_search` | Search with citations |
+| `ragmir_search` | Search one project with citations |
+| `ragmir_search_all` | **Universal search across all projects** — call this when you don't know which project holds the answer (prevents creating duplicate corpora) |
 | `ragmir_ask` | Get context for a question (no LLM) |
 | `ragmir_research` | Multi-query research |
 
@@ -307,11 +308,12 @@ When multiple agents share a ragmir server, the **collective memory** is only as
 ### Pre-task: search before you invent
 
 ```
-ragmir_list_projects                            # only if uncertain which project
+ragmir_search_all("<task-id> <question>", topK=3, totalLimit=10)   # default — covers all projects
+# OR, if you already know the target project:
 ragmir_search(project, "<task-id> <question>", topK=5)
 ```
 
-If the answer exists in ragmir, don't write a new record. If you find a better answer elsewhere, supersede (don't overwrite).
+If the answer exists in ragmir, don't write a new record. If you find a better answer elsewhere, supersede (don't overwrite). `ragmir_search_all` is the recommended first step because it queries every project in one call and tags each hit with its source — preventing the failure mode where a new agent creates a duplicate corpus because they didn't know prior work existed in another project.
 
 ### Post-task: curate, don't overwrite
 

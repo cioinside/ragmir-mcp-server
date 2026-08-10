@@ -10,6 +10,45 @@ it so that knowledge you add is durable, discoverable, and useful to other agent
 
 ---
 
+## 0. Two Project Types (retrieval vs. curation)
+
+**ragmir projects fall into two distinct categories — they MUST be kept separate.** Mixing
+them pollutes the index with off-topic chunks and degrades search quality.
+
+### Type A: Retrieval projects (raw source ingestion)
+
+One ragmir project per **content domain**. Contents: PDF, DOCX, source code, JSONL corpora,
+technical specs, website templates — anything that should be **retrieved** as-is.
+
+- Loaded via `ragmir_add_sources` / `rgr ingest` / upload endpoint.
+- **No MASIP frontmatter required.** These are documents to be searched, not curated notes.
+- Don't try to `supersede_note` a raw PDF or DOCX — that's not what supersession means.
+- Examples: `/opt/ragmir-projects/fermi-instruments/` (Bitrix site templates + product docs),
+  `/opt/ragmir-projects/bitrix-psk-info/`.
+
+### Type B: Knowledge-record projects (curated MASIP records)
+
+One or more dedicated projects for **cross-domain patterns and curated notes**. Contents:
+small (2-10 KB) Markdown / YAML / JSON files with **mandatory YAML frontmatter**.
+
+- Created via `ragmir_write_file` with full frontmatter (`project_context`,
+  `environment`, `tech_stack`, `quality_score`, `version`, `supersedes`, `agent_id`,
+  `timestamp`).
+- Path convention: `experience/<task-id>/note.<ext>` or `patterns/<pattern-name>.<ext>`.
+- Evolved via the lifecycle: `append_file` (new finding) → `edit_file` (field change) →
+  `supersede_note` (approach changed) → never `delete_file`.
+- Examples: `/opt/ragmir-projects/experience-records/` (cross-domain patterns), or a
+  per-domain `patterns/` subdirectory inside a retrieval project.
+
+> **Don't mix.** Adding a knowledge record to a retrieval project pollutes the index with
+> off-topic chunks; adding a source PDF to a knowledge-record project bloats it with
+> uncurated data. If you're not sure which type a project is, check its `sources` glob
+> in `.ragmir/config.json` — retrieval projects list document extensions (`*.pdf`,
+> `*.docx`); knowledge-record projects list record extensions (`*.md`, `*.yaml`,
+> `*.json`) and the project contains very few small files.
+
+---
+
 ## 1. Context-Aware Retrieval (Pre-Task)
 
 Before starting any task, query ragmir first. Use metadata filters in your natural-
@@ -19,17 +58,26 @@ sidecar files.
 ### Strategy
 
 1. `ragmir_list_projects` — only if uncertain which project holds the relevant record
-2. `ragmir_search(project, "<task-id-or-domain> <specific question>", topK=5)` — fast
-   raw-passage retrieval with citations
-3. `ragmir_ask(project, "...")` — when you need an LLM-synthesized answer with citations
-4. `ragmir_research(project, "...")` — only for broad multi-doc investigations
+2. `ragmir_search_all(query, topK=3, totalLimit=10)` — **START HERE when the answer
+   may span projects** (or you're unsure which project holds it). One call queries
+   every initialized project, merges hits by relevance, and tags each hit with its
+   source project. Prevents creating duplicate corpora when prior work already
+   exists in another project.
+3. `ragmir_search(project, "<task-id-or-domain> <specific question>", topK=5)` — fast
+   raw-passage retrieval with citations, narrowed to a single project
+4. `ragmir_ask(project, "...")` — when you need an LLM-synthesized answer with citations
+5. `ragmir_research(project, "...")` — only for broad multi-doc investigations
 
 ### Search-query hygiene
 
 - Include the project/task domain in the query (`"auth-implementation JWT rotation"`
   beats `"how to refresh tokens"`).
-- If no hit in the current project, search sibling projects for analogous patterns —
-  note the cross-pollination explicitly in your answer.
+- **Prefer `ragmir_search_all` over guessing which project to query.** Zero upfront
+  knowledge needed; the tool returns ranked hits with source attribution. If a
+  candidate project lacks the data, it just returns 0 hits (no penalty).
+- If you can't use `ragmir_search_all` and need to query a specific project, but
+  the answer is missing, search sibling projects for analogous patterns — note the
+  cross-pollination explicitly in your answer.
 - Don't pre-emptively search a project that doesn't exist. Use `ragmir_list_projects`
   first when context is fuzzy.
 
@@ -37,7 +85,8 @@ sidecar files.
 
 | Tool | When |
 |---|---|
-| `ragmir_search` | Specific lookup, known terminology, want citations |
+| `ragmir_search_all` | **Default for cross-project questions.** When unsure which project, or when prior work may exist in another project. One call, all projects. |
+| `ragmir_search` | You know exactly which project and want raw passages with citations |
 | `ragmir_ask` | Question needs reasoning over multiple passages |
 | `ragmir_research` | Broad report, comparison across many docs, slow but thorough |
 

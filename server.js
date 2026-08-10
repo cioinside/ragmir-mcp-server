@@ -303,6 +303,36 @@ let TOOLS = [
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
+  {
+    name: 'ragmir_search_all',
+    title: 'Search All Projects',
+    description:
+      'Universal search across all Ragmir projects. ' +
+      'CALL THIS FIRST when starting any task — it queries every project\'s index in one shot, ' +
+      'returns passages ranked by relevance, and tags each hit with its source project. ' +
+      'Use this INSTEAD OF ragmir_search when you are not sure which project contains the relevant data, ' +
+      'when a question may have answers in multiple projects, or when you want to check whether prior ' +
+      'work already exists before creating a new project. ' +
+      'Pass projects=[...] to restrict the search to a specific subset. ' +
+      'Lower distance = better match (ANNOY/Euclidean). Hits with distance=null go to the end.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', minLength: 1, maxLength: 20000, description: 'Natural language search query' },
+        topK: { type: 'integer', exclusiveMinimum: 0, maximum: 100, description: 'Max results per project (default 3)' },
+        projects: {
+          type: 'array',
+          items: { type: 'string', minLength: 1, maxLength: 100 },
+          description: 'Optional list of project names to search (default: all initialized projects)',
+        },
+        totalLimit: { type: 'integer', exclusiveMinimum: 1, maximum: 100, description: 'Max total results after merging across projects (default 10)' },
+        offset: { type: 'integer', exclusiveMinimum: 0, maximum: 100, description: 'Number of leading hits to skip for pagination (default 0)' },
+      },
+      required: ['query'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
 
   // ─── Knowledge accumulation tools ──────────────────────────────────────
 
@@ -735,6 +765,153 @@ let handlers = {
     const kArg = topK ? `--top-k ${topK}` : '';
     const out = rgr(`research "${query.replace(/"/g, '\\"')}" ${kArg}`, projectPath, 120000);
     return { content: [{ type: 'text', text: out || 'No results found.' }] };
+  },
+
+  ragmir_search_all({ query, topK, projects, totalLimit, offset }) {
+    if (typeof query !== 'string' || query.length === 0) {
+      throw new Error('Provide a non-empty "query" string');
+    }
+
+    const perProjectK = topK || 3;
+    const limit = totalLimit || 10;
+    const skip = offset || 0;
+    const escapedQuery = query.replace(/"/g, '\\"');
+
+    let projectNames;
+    if (Array.isArray(projects) && projects.length > 0) {
+      projectNames = projects;
+    } else if (fs.existsSync(PROJECTS_DIR)) {
+      projectNames = fs.readdirSync(PROJECTS_DIR, { withFileTypes: true })
+        .filter(e => e.isDirectory())
+        .filter(e => fs.existsSync(path.join(PROJECTS_DIR, e.name, '.ragmir')))
+        .map(e => e.name);
+    } else {
+      return { content: [{ type: 'text', text: `No projects directory at ${PROJECTS_DIR}` }] };
+    }
+
+    if (projectNames.length === 0) {
+      return { content: [{ type: 'text', text: 'No initialized projects found.' }] };
+    }
+
+    // rgr() is execSync-based, so we run searches sequentially. For ≤10
+    // projects × 1-2s each this is acceptable and keeps the synchronous
+    // model consistent with the rest of the server. Convert to child_process
+    // + Promise.all if cross-project latency ever becomes a bottleneck.
+    const allHits = [];
+    const perProjectStats = [];
+
+    for (const name of projectNames) {
+      const projectPath = getProjectPath(name);
+      const jsonOut = rgr(
+        `search "${escapedQuery}" --top-k ${perProjectK} --json`,
+        projectPath,
+        60000
+      );
+
+      let parsed;
+      try {
+        // rgr() returns stdout + '\n' + (stderr || e.message) on non-zero exit
+        // (when zero hits the CLI exits 1 but still writes valid JSON to stdout).
+        // Walk braces to find the end of the first JSON object and parse only that.
+        const trimmed = jsonOut.trim();
+        const firstBrace = trimmed.indexOf('{');
+        if (firstBrace === -1) {
+          throw new Error('No JSON object found in rgr output');
+        }
+        let depth = 0;
+        let endIdx = -1;
+        let inString = false;
+        let escape = false;
+        for (let i = firstBrace; i < trimmed.length; i++) {
+          const c = trimmed[i];
+          if (inString) {
+            if (escape) { escape = false; continue; }
+            if (c === '\\') { escape = true; continue; }
+            if (c === '"') { inString = false; }
+            continue;
+          }
+          if (c === '"') { inString = true; continue; }
+          if (c === '{') depth++;
+          else if (c === '}') {
+            depth--;
+            if (depth === 0) { endIdx = i; break; }
+          }
+        }
+        if (endIdx === -1) {
+          throw new Error('No matching closing brace in rgr output');
+        }
+        parsed = JSON.parse(trimmed.slice(firstBrace, endIdx + 1));
+      } catch (e) {
+        perProjectStats.push({ project: name, hits: 0, error: `JSON parse failed: ${e.message}` });
+        continue;
+      }
+
+      const results = Array.isArray(parsed && parsed.results) ? parsed.results : [];
+      let count = 0;
+      for (const r of results) {
+        allHits.push({
+          project: name,
+          distance: typeof r.distance === 'number' ? r.distance : null,
+          citation: r.citation || r.relativePath || r.source || '(unknown source)',
+          text: typeof r.text === 'string' ? r.text : '',
+        });
+        count++;
+      }
+      perProjectStats.push({ project: name, hits: count });
+    }
+
+    allHits.sort((a, b) => {
+      if (a.distance === null && b.distance === null) return 0;
+      if (a.distance === null) return 1;
+      if (b.distance === null) return -1;
+      return a.distance - b.distance;
+    });
+
+    const page = allHits.slice(skip, skip + limit);
+    const totalCandidates = allHits.length;
+
+    if (page.length === 0) {
+      const stats = perProjectStats.map(s =>
+        s.error
+          ? `• ${s.project}: error — ${s.error}`
+          : `• ${s.project}: ${s.hits} hit(s)`
+      ).join('\n');
+      return {
+        content: [{
+          type: 'text',
+          text: `No results across ${projectNames.length} project(s) for "${query}".\n\nPer-project stats:\n${stats}`,
+        }],
+      };
+    }
+
+    const stats = perProjectStats.map(s =>
+      s.error
+        ? `• ${s.project}: error`
+        : `• ${s.project}: ${s.hits} hit(s)`
+    ).join('\n');
+
+    const projectListStr = projectNames.join(', ');
+    const pageInfo = skip > 0 ? ` (page: skip ${skip}, showing ${page.length})` : '';
+
+    const body = page.map((h, i) => {
+      const scoreStr = h.distance === null
+        ? 'distance=null (BM25-only)'
+        : `distance=${h.distance.toFixed(4)}`;
+      const preview = h.text.length > 800 ? h.text.slice(0, 800) + '…' : h.text;
+      return `[${i + 1}] project="${h.project}" ${scoreStr}\n    citation: ${h.citation}\n    ${preview.replace(/\n/g, '\n    ')}`;
+    }).join('\n\n');
+
+    const header =
+      `Searched ${projectNames.length} project(s): ${projectListStr}\n` +
+      `Query: "${query}"\n` +
+      `Total candidates across all projects: ${totalCandidates}. Showing ${page.length}${pageInfo}.\n`;
+
+    return {
+      content: [{
+        type: 'text',
+        text: `${header}\n${body}\n\n---\nPer-project stats:\n${stats}`,
+      }],
+    };
   },
 
   // ─── Knowledge accumulation handlers ───────────────────────────────────
