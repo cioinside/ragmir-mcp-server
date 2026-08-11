@@ -595,6 +595,46 @@ cp /usr/local/node22/lib/node_modules/@jcode.labs/ragmir/dist/parsing.js.bak.<ti
    /usr/local/node22/lib/node_modules/@jcode.labs/ragmir/dist/parsing.js
 ```
 
+### `rgr ingest` rejects YAML files with frontmatter
+
+**Symptom.** Any `.yaml` / `.yml` file containing more than one YAML
+document (the Hugo / Jekyll / Eleventy / Hexo / Pelican frontmatter
+pattern) fails to ingest with:
+
+```
+YAML.parse() ERROR: Source contains multiple documents;
+please use YAML.parseAllDocuments() at line 5, column 1
+```
+
+The file is silently skipped — `indexedFiles` does not increment for it
+and `rgr audit` reports it as missing from the index.
+
+**Cause.** Upstream `packages/ragmir-core/src/parsing.ts:86` (compiled
+`dist/parsing.js`) handles `.yaml` / `.yml` via `YAML.parse()`. The
+`yaml` npm package (v2.9.0) refuses multi-document sources in `parse()`
+and points at `parseAllDocuments()` for that case.
+
+**Reported.** https://github.com/jcode-works/jcode-ragmir/issues/159
+
+**Workaround.** Apply the local multi-line patch via the idempotent script:
+
+```bash
+scripts/apply-rgr-yaml-patch.sh
+```
+
+The script replaces the single `YAML.stringify(YAML.parse(...))` call
+with `YAML.parseAllDocuments(...)` + `map` + `join("\n")`:
+
+```diff
+-        text = YAML.stringify(YAML.parse(await readFile(file.absolutePath, "utf8")));
++        const docs = YAML.parseAllDocuments(await readFile(file.absolutePath, "utf8"));
++        text = docs.map((d) => YAML.stringify(d)).join("\n");
+```
+
+Both documents (frontmatter + body) become indexable text and the file
+ingests cleanly. Empty / frontmatter-only documents stringify to `null`
+and are handled by the existing downstream null-text path.
+
 ## License
 
 MIT

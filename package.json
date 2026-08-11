@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "node server.js",
-    "postinstall": "bash scripts/apply-rgr-pdf-patch.sh || true"
+    "postinstall": "bash scripts/apply-rgr-pdf-patch.sh; bash scripts/apply-rgr-yaml-patch.sh; true"
   },
   "keywords": [
     "mcp",
