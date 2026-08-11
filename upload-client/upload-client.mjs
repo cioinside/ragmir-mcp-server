@@ -139,16 +139,29 @@ server.registerTool(
       }
 
       if (result.ok) {
-        const ingested = result.ingested ? ' (indexed)' : ' (indexing pending)';
+        const baseTag = result.ingestSkipped
+          ? ' (uploaded; autoIngest disabled)'
+          : ' (uploaded and indexed)';
+        const warning = result.ingestWarning ? ` — warning: ${result.ingestWarning}` : '';
         return {
-          content: [{ type: 'text', text: `Uploaded ${fileName} (${result.bytes} bytes) to ${project}/${remotePath}${ingested}` }],
-        };
-      } else {
-        return {
-          content: [{ type: 'text', text: `Upload failed: ${result.error || JSON.stringify(result)}` }],
-          isError: true,
+          content: [{ type: 'text', text: `Uploaded ${fileName} (${result.bytes} bytes) to ${project}/${remotePath}${baseTag}${warning}` }],
         };
       }
+
+      const lines = [];
+      if (result.error) {
+        lines.push(`Upload failed: ${result.error}`);
+      } else if (result.ingestError) {
+        lines.push(`Upload saved to disk but ingestion failed: ${result.ingestError}`);
+      } else {
+        lines.push(`Upload failed (no diagnostic from server): ${JSON.stringify(result).slice(0, 500)}`);
+      }
+      const stderrTail = (result.ingestStderr || '').trim();
+      const stdoutTail = (result.ingestStdout || '').trim();
+      if (stderrTail) lines.push(`rgr stderr: ${stderrTail.slice(-500)}`);
+      if (stdoutTail && !stdoutTail.startsWith('Done.')) lines.push(`rgr stdout: ${stdoutTail.slice(0, 500)}`);
+      if (result.ingestExitCode != null) lines.push(`rgr exit code: ${result.ingestExitCode}`);
+      return { content: [{ type: 'text', text: lines.join('\n') }], isError: true };
     } catch (e) {
       return { content: [{ type: 'text', text: `Upload error: ${e.message}` }], isError: true };
     }

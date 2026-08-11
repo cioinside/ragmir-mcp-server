@@ -65,6 +65,73 @@ function sendJson(res, code, obj) {
   res.end(body);
 }
 
+function runRgrIngest(projectDir) {
+  let stdout = '';
+  let stderr = '';
+  let exitCode = 0;
+  try {
+    stdout = execSync(`${RGR} ingest --project-root "${projectDir}"`, {
+      encoding: 'utf8', timeout: 300000,
+      env: { ...process.env, PATH: `/usr/local/node22/bin:${process.env.PATH}` },
+    }) || '';
+  } catch (e) {
+    exitCode = (e && e.status != null) ? e.status : 1;
+    stdout = (e && e.stdout) || '';
+    stderr = (e && e.stderr) || '';
+  }
+  return { exitCode, stdout, stderr };
+}
+
+const RGR_DONE_LINE = /indexedFiles=(\d+)[^\n]*?errors=(\d+)/;
+const RGR_EMPTY_TEXT_LINE = /emptyTextFiles=(\d+)/;
+
+function classifyRgrOutcome(outcome) {
+  const { exitCode, stdout, stderr } = outcome;
+
+  if (exitCode !== 0) {
+    return {
+      ok: false,
+      ingested: false,
+      error: `rgr ingest exited with code ${exitCode}: ${(stderr || stdout || '(no output)').trim().slice(0, 500)}`,
+    };
+  }
+
+  const summary = stdout.match(RGR_DONE_LINE);
+  if (!summary) {
+    return {
+      ok: false,
+      ingested: false,
+      error: `Could not parse rgr ingest summary. Raw stdout: ${stdout.trim().slice(0, 300)}`,
+    };
+  }
+
+  const indexedFiles = parseInt(summary[1], 10);
+  const errorFiles = parseInt(summary[2], 10);
+  const emptyMatch = stdout.match(RGR_EMPTY_TEXT_LINE);
+  const emptyTextFiles = emptyMatch ? parseInt(emptyMatch[1], 10) : 0;
+
+  if (errorFiles > 0) {
+    return {
+      ok: false,
+      ingested: indexedFiles > 0,
+      error: `rgr ingest reported ${errorFiles} file error(s); see ingestStdout/ingestStderr for per-file details.`,
+    };
+  }
+
+  if (indexedFiles === 0) {
+    const hint = emptyTextFiles > 0
+      ? `${emptyTextFiles} file(s) produced no indexable text — likely a scanned PDF/image without OCR configured, or an empty/corrupt source. See rgr ocr doctor.`
+      : 'rgr ingest produced no indexed chunks.';
+    return { ok: false, ingested: false, error: hint };
+  }
+
+  const warning = emptyTextFiles > 0
+    ? `${emptyTextFiles} file(s) produced no indexable text and were skipped; see ingestStdout for details.`
+    : null;
+
+  return { ok: true, ingested: true, error: null, warning };
+}
+
 const server = http.createServer((req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(200, {
@@ -116,20 +183,26 @@ const server = http.createServer((req, res) => {
       fs.mkdirSync(path.dirname(fullPath), { recursive: true });
       fs.writeFileSync(fullPath, filePart.data);
 
-      const result = { ok: true, project, path: filePath, bytes: filePart.data.length };
+      const result = { ok: false, project, path: filePath, bytes: filePart.data.length };
 
       const doIngest = autoPart ? autoPart.data.toString('utf8').trim() !== 'false' : true;
       if (doIngest) {
-        try {
-          execSync(`${RGR} ingest --project-root "${projectDir}"`, {
-            encoding: 'utf8', timeout: 300000,
-            env: { ...process.env, PATH: `/usr/local/node22/bin:${process.env.PATH}` },
-          });
-          result.ingested = true;
-        } catch (e) {
-          result.ingested = false;
-          result.ingestError = e.stderr || e.message;
-        }
+        const ingestOutcome = runRgrIngest(projectDir);
+
+        result.ingestExitCode = ingestOutcome.exitCode;
+        result.ingestStdout = ingestOutcome.stdout.trim();
+        result.ingestStderr = ingestOutcome.stderr.trim();
+
+        const classified = classifyRgrOutcome(ingestOutcome);
+        result.ingested = classified.ingested;
+        result.ingestError = classified.error;
+        result.ingestWarning = classified.warning;
+
+        result.ok = classified.ok;
+      } else {
+        result.ok = true;
+        result.ingested = false;
+        result.ingestSkipped = true;
       }
 
       sendJson(res, 200, result);

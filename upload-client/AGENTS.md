@@ -15,6 +15,48 @@ Separate deployable from the root `server.js` — do not merge.
 - **`upload_to_ragmir`** — multipart POST to `${UPLOAD_URL}/upload`. Manual multipart construction (NOT `fetch`/FormData — undici 50MB body limit). Validates project name with `/^[a-zA-Z0-9._-]+$/`.
 - **`list_local_files`** — recursive directory walk with optional extension filter.
 
+## `upload_to_ragmir` response shape
+
+The remote `/upload` endpoint returns JSON. The tool translates it into an
+MCP tool result with `isError` set when anything went wrong. Server-side
+classification happens in `../upload-server.js:runRgrIngest` +
+`classifyRgrOutcome`; the fields below are guaranteed to be present on
+every 200 OK:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `ok` | `boolean` | File on disk **and** at least one source indexed with zero errors. |
+| `error` | `string \| undefined` | Top-level error (project not found, missing multipart field, etc.). When set, `ok:false`. |
+| `ingestError` | `string \| undefined` | Why `rgr ingest` did not produce the expected outcome (non-zero exit, indexedFiles=0, errors>0). |
+| `ingestWarning` | `string \| undefined` | Partial-success signal: some files indexed but `emptyTextFiles>0`. |
+| `ingested` | `boolean` | True iff rgr reports `indexedFiles>0 && errors==0` for this run. |
+| `ingestSkipped` | `boolean` | True iff the caller passed `autoIngest=false`. |
+| `ingestExitCode` | `number` | `rgr ingest` exit status. `0` even on silent failures. |
+| `ingestStdout` | `string` | Full rgr stdout (includes `Done. ...` summary line). |
+| `ingestStderr` | `string` | Full rgr stderr (usually empty; rgr writes diagnostics to stdout). |
+| `bytes` | `number` | Bytes written to disk. |
+| `path`, `project` | `string` | Echoed back from the request. |
+
+Decision matrix (see `classifyRgrOutcome` in `../upload-server.js`):
+
+| rgr summary | `ok` | `ingested` | `ingestError` | `ingestWarning` |
+|---|---|---|---|---|
+| exit code != 0 | `false` | `false` | "rgr ingest exited with code N: ..." | — |
+| summary unparseable | `false` | `false` | "Could not parse rgr ingest summary..." | — |
+| `errors > 0` | `false` | indexedFiles>0 | "rgr ingest reported N file error(s)..." | — |
+| `indexedFiles == 0 && emptyTextFiles > 0` | `false` | `false` | "N file(s) produced no indexable text..." | — |
+| `indexedFiles == 0 && emptyTextFiles == 0` | `false` | `false` | "rgr ingest produced no indexed chunks." | — |
+| `indexedFiles > 0 && emptyTextFiles > 0` | `true` | `true` | — | "N file(s) produced no indexable text and were skipped..." |
+| `indexedFiles > 0 && emptyTextFiles == 0` | `true` | `true` | — | — |
+
+Client-side rendering rules (see `upload-client.mjs`):
+
+- `ok && ingested && !warning` → `"Uploaded <file> (<bytes>) to <project>/<path> (uploaded and indexed)"`
+- `ok && warning`            → same, suffixed with ` — warning: <ingestWarning>`
+- `ingestSkipped`            → tag becomes ` (uploaded; autoIngest disabled)`
+- `!ok && ingestError`       → `"Upload saved to disk but ingestion failed: <ingestError>"` + truncated `rgr stderr`/`rgr stdout` + `rgr exit code: N`; `isError: true`
+- `!ok && error`             → `"Upload failed: <error>"`; `isError: true`
+
 ## Config resolution (priority order)
 
 1. `RAGMIR_UPLOAD_URL` env var.
