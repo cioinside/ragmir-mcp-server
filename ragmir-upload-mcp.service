@@ -1,0 +1,16 @@
+[Unit]
+Description=Ragmir Upload MCP Server (mcp-proxy SSE)
+After=network.target ragmir-upload.service
+
+[Service]
+Type=simple
+Environment=PATH=/usr/local/node22/bin:/usr/local/bin:/usr/bin:/bin:$HOME/.local/bin
+Environment=RAGMIR_UPLOAD_URL=http://localhost:8002/upload
+ExecStart=/usr/local/node22/bin/npx mcp-proxy --port 8003 --host 127.0.0.1 -- node $INSTALL_DIR/upload-client/upload-client.mjs
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
