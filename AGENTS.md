@@ -87,8 +87,9 @@ stdio JSON-RPC, 23 MCP tools.
 
 - `ragmir-mcp.service` — `mcpo` on :8000 (OpenAPI). Requires `--with mcp<2.0.0` because mcpo 0.0.20 imports `streamablehttp_client` (mcp 1.x naming) and mcp 2.0.0 renamed it to `streamable_http_client`.
 - `ragmir-sse.service` — `mcp-proxy` on :8001 (SSE). Wraps server.js via stdio.
+- `ragmir-upload-mcp.service` — `mcp-proxy` on :8003 (SSE, `127.0.0.1` by default). Wraps `upload-client/upload-client.mjs` via stdio. Lets remote agents use `upload_to_ragmir` without needing local file access or `/root` perms.
 - `ragmir-watcher.service` — auto-ingest file watcher (10s poll).
-- `ragmir-upload.service` — binary upload endpoint (currently inactive).
+- `ragmir-upload.service` — raw HTTP `/upload` endpoint on :8002. Required by `ragmir-upload-mcp` (the SSE wrapper POSTs to it).
 
 ## Push auth gotcha
 

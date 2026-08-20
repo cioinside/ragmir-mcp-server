@@ -18,25 +18,36 @@ Remote AI agents (OpenCode, Claude, Cursor, etc.) can create projects, provide f
 [Remote Agent / OpenCode]                  [Open WebUI]
          │                                       │
          │  SSE (MCP transport)                  │  REST (OpenAPI)
-         ▼                                       ▼
-    mcp-proxy :8001                         mcpo :8000
-         │                                       │
-         │  stdio (stdin/stdout)                 │  stdio
-         ▼                                       ▼
-    ragmir-server.js  ◄─── shared ───►   ragmir-server.js
-         │                                       │
+         ├──────────────┐                         ▼
+         ▼              ▼                    mcpo :8000
+    mcp-proxy :8001  mcp-proxy :8003            │
+    (ragmir MCP)    (ragmir-upload MCP)        │
+         │              │                      │  stdio
+         │ stdio        │ stdio                 ▼
+         ▼              ▼                ragmir-server.js
+    ragmir-server.js  upload-client.mjs         │
+         │              │                      │
+         │              │ HTTP POST            │
+         │              ▼                      │
+         │       upload-server :8002           │
+         │              │                      │
+         ├──────────────┴──────────────────────┤
+         │                                     │
          ├── rgr CLI (search, ingest, ask, research)
          └── /opt/ragmir-projects/ (project storage)
 ```
 
-Two ports, one server:
-- **Port 8001** — SSE transport (MCP protocol) for OpenCode, Claude, Cursor
+Ports:
+- **Port 8001** — SSE transport (MCP protocol) for `ragmir` tools, OpenCode / Claude / Cursor
+- **Port 8003** — SSE transport (MCP protocol) for `ragmir-upload` tools, exposes `upload_to_ragmir` to remote agents
 - **Port 8000** — REST/OpenAPI proxy (via mcpo) for Open WebUI
+- **Port 8002** — raw HTTP `/upload` endpoint (used by `ragmir-upload` SSE above and by clients that prefer curl/scripts)
 
-Three services:
+Services:
 - `ragmir-mcp` (mcpo) — port 8000, REST/OpenAPI
-- `ragmir-sse` (mcp-proxy) — port 8001, SSE/MCP
-- `ragmir-upload` (upload-server) — port 8002, file upload endpoint
+- `ragmir-sse` (mcp-proxy) — port 8001, SSE/MCP for `ragmir`
+- `ragmir-upload-mcp` (mcp-proxy) — port 8003, SSE/MCP wrapper for `upload-client.mjs`
+- `ragmir-upload` (upload-server) — port 8002, raw HTTP upload endpoint
 
 ## Quick Install
 
@@ -98,8 +109,12 @@ sudo ufw allow 8000/tcp
 |---|---|---|
 | `RAGMIR_MCP_INSTALL_DIR` | `/usr/local/lib/ragmir-server` | Server installation path |
 | `RAGMIR_PROJECTS_DIR` | `/opt/ragmir-projects` | Project storage directory |
-| `RAGMIR_MCP_PORT` | `8000` | HTTP port |
+| `RAGMIR_MCP_PORT` | `8000` | REST/OpenAPI port (mcpo) |
 | `RAGMIR_MCP_API_KEY` | `CHANGE-ME` | API key for authentication |
+| `RAGMIR_SSE_PORT` | `8001` | SSE port for `ragmir` MCP |
+| `RAGMIR_UPLOAD_PORT` | `8002` | Raw HTTP `/upload` port |
+| `RAGMIR_UPLOAD_MCP_PORT` | `8003` | SSE port for `ragmir-upload` MCP |
+| `RAGMIR_UPLOAD_MCP_HOST` | `127.0.0.1` | Bind host for upload-mcp SSE (set `0.0.0.0` to expose on LAN) |
 
 ## Usage
 
@@ -364,7 +379,11 @@ See [`MASIP.md`](./MASIP.md) for the full protocol with examples, anti-patterns,
 
 Text files (.py, .md, .js) → use `ragmir_write_files_batch` MCP tool.
 
-Binary files (.docx, .pdf, .xlsx, images) → use HTTP upload endpoint (too large for MCP tool calls):
+Binary files (.docx, .pdf, .xlsx, images) → two options:
+
+**Option A — MCP tool (recommended for remote agents):** connect via `ragmir-upload` SSE on port `:8003`, the agent gets an `upload_to_ragmir` tool. See [Connecting from Remote OpenCode](#connecting-from-remote-opencode).
+
+**Option B — raw HTTP upload endpoint** (too large for MCP tool calls):
 
 ```bash
 # Linux/Mac
@@ -397,6 +416,11 @@ Add to `~/.config/opencode/opencode.jsonc` on the remote PC:
       "type": "remote",
       "url": "http://192.168.1.100:8001/sse",
       "enabled": true
+    },
+    "ragmir-upload": {
+      "type": "remote",
+      "url": "http://192.168.1.100:8003/sse",
+      "enabled": true
     }
   }
 }
@@ -404,7 +428,9 @@ Add to `~/.config/opencode/opencode.jsonc` on the remote PC:
 
 Replace `192.168.1.100` with your server's IP.
 
-**Port 8001** serves the SSE transport that OpenCode expects. Port 8000 is REST/OpenAPI (for Open WebUI).
+**Port 8001** serves the SSE transport for `ragmir` tools. **Port 8003** serves the SSE transport for `ragmir-upload` (binary file upload via the `upload_to_ragmir` tool). Port 8000 is REST/OpenAPI (for Open WebUI). Port 8002 is the raw HTTP `/upload` endpoint.
+
+Both `ragmir` and `ragmir-upload` can run as remote MCPs from any machine on the LAN — no local file paths needed, no `/root` access required.
 
 ## Connecting from OpenCode with Binary File Upload (Windows)
 
@@ -500,6 +526,16 @@ The upload client uses Node.js `http.request` (no undici `fetch`), so there is *
 systemctl status ragmir-mcp
 systemctl restart ragmir-mcp
 journalctl -u ragmir-mcp -f
+
+# SSE gateway (ragmir MCP)
+systemctl status ragmir-sse
+systemctl restart ragmir-sse
+journalctl -u ragmir-sse -f
+
+# SSE gateway (ragmir-upload MCP, optional)
+systemctl status ragmir-upload-mcp
+systemctl restart ragmir-upload-mcp
+journalctl -u ragmir-upload-mcp -f
 
 # Logs
 journalctl -u ragmir-mcp -n 50 --no-pager
