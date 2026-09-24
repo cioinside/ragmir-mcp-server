@@ -40,6 +40,7 @@ stdio JSON-RPC, 23 MCP tools.
 - **`supersede_note` YAML bug**: handler only prepended `status: superseded` if missing, didn't update existing `status: active`. Fix: scan-and-replace existing `status:` and `superseded_by:` lines in place.
 - **`delete_file` orphan chunks**: did `fs.unlinkSync` without calling `rgr ingest`, leaving orphaned chunks. Now has `autoIngest` parameter (default true).
 - Don't pass `undefined` to `fs.writeFileSync` — gives cryptic "data argument must be of type string" error. Always validate string args at handler entry.
+- **`oneOf` in inputSchema breaks Qwen tool-calling (via llama.cpp/ollama OpenAI-compatible backend)**: `ragmir_write_file` originally used `oneOf: [{required:['content']},{required:['contentBase64']}]`. Qwen3.6-35B-A3B returned `arguments: "{}"` for that tool — every call came in with `project`/`path`/`content` undefined and died in `path.join()` with `The "path" argument must be of type string`. Same schema worked for MiniMax/big-pickle models. `append_file` and `write_files_batch` (no top-level `oneOf`) worked fine. Fix: dropped `oneOf`; handler still validates `content`/`contentBase64` presence itself. Rule: **No top-level `oneOf`/`anyOf` in tool schemas.** Reproduction: POST to `http://192.168.1.226:3008/v1/chat/completions` with the tool def; Qwen emits `"arguments":"{}"` when `oneOf` present, correct JSON when absent.
 
 ## Verification protocol (use this when changing server.js)
 

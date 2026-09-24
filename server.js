@@ -117,10 +117,6 @@ let TOOLS = [
         autoIngest: { type: 'boolean', description: 'Auto-run ingestion after write (default: true)' },
       },
       required: ['project', 'path'],
-      oneOf: [
-        { required: ['content'] },
-        { required: ['contentBase64'] },
-      ],
       additionalProperties: false,
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
