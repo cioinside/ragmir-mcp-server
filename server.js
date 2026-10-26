@@ -3,7 +3,7 @@
 // Supports: project management, file upload, ingest, search/ask/research
 // Runs over stdio (for mcpo) or standalone
 
-const { execSync, spawn } = require('child_process');
+const { execSync, spawn, execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
@@ -763,7 +763,7 @@ let handlers = {
     return { content: [{ type: 'text', text: out || 'No results found.' }] };
   },
 
-  ragmir_search_all({ query, topK, projects, totalLimit, offset }) {
+  async ragmir_search_all({ query, topK, projects, totalLimit, offset }) {
     if (typeof query !== 'string' || query.length === 0) {
       throw new Error('Provide a non-empty "query" string');
     }
@@ -771,7 +771,6 @@ let handlers = {
     const perProjectK = topK || 3;
     const limit = totalLimit || 10;
     const skip = offset || 0;
-    const escapedQuery = query.replace(/"/g, '\\"');
 
     let projectNames;
     if (Array.isArray(projects) && projects.length > 0) {
@@ -789,20 +788,29 @@ let handlers = {
       return { content: [{ type: 'text', text: 'No initialized projects found.' }] };
     }
 
-    // rgr() is execSync-based, so we run searches sequentially. For ≤10
-    // projects × 1-2s each this is acceptable and keeps the synchronous
-    // model consistent with the rest of the server. Convert to child_process
-    // + Promise.all if cross-project latency ever becomes a bottleneck.
+    // Parallel fan-out: sequential execSync per project crossed the gateway's
+    // 10s tool timeout once the company passed ~10 projects (11 × ~1s + spawn
+    // overhead). Wall time is now ≈ slowest project, not the sum. argv-form
+    // execFile needs no shell escaping and resolves failures to the same
+    // stdout+stderr string rgr() returned, so parsing below is unchanged.
+    const searchOne = name => new Promise(resolve => {
+      execFile(RGR, ['--project-root', getProjectPath(name), 'search', query,
+        '--top-k', String(perProjectK), '--json'], {
+        encoding: 'utf8',
+        timeout: 60000,
+        maxBuffer: 10 * 1024 * 1024,
+        env: { ...process.env, PATH: `/usr/local/node22/bin:${process.env.PATH}` },
+      }, (err, stdout, stderr) => {
+        resolve(err ? (stdout || '') + '\n' + (stderr || err.message) : (stdout || ''));
+      });
+    });
+
+    const jsonOuts = await Promise.all(projectNames.map(searchOne));
     const allHits = [];
     const perProjectStats = [];
 
-    for (const name of projectNames) {
-      const projectPath = getProjectPath(name);
-      const jsonOut = rgr(
-        `search "${escapedQuery}" --top-k ${perProjectK} --json`,
-        projectPath,
-        60000
-      );
+    projectNames.forEach((name, i) => {
+      const jsonOut = jsonOuts[i];
 
       let parsed;
       try {
@@ -839,7 +847,7 @@ let handlers = {
         parsed = JSON.parse(trimmed.slice(firstBrace, endIdx + 1));
       } catch (e) {
         perProjectStats.push({ project: name, hits: 0, error: `JSON parse failed: ${e.message}` });
-        continue;
+        return;
       }
 
       const results = Array.isArray(parsed && parsed.results) ? parsed.results : [];
@@ -854,7 +862,7 @@ let handlers = {
         count++;
       }
       perProjectStats.push({ project: name, hits: count });
-    }
+    });
 
     allHits.sort((a, b) => {
       if (a.distance === null && b.distance === null) return 0;
@@ -1365,7 +1373,20 @@ function handleRequest(req) {
 
     try {
       const result = handlers[toolName](args);
-      sendResponse(id, result);
+      // Async handlers (e.g. ragmir_search_all fan-out) resolve later; sync
+      // handlers still answer inline. Rejections funnel to the same isError path.
+      if (result && typeof result.then === 'function') {
+        pendingAsyncCalls++;
+        result.then(
+          r => { sendResponse(id, r); settleAsyncCall(); },
+          e => {
+            sendResponse(id, { content: [{ type: 'text', text: `Error: ${e.message}` }], isError: true });
+            settleAsyncCall();
+          }
+        );
+      } else {
+        sendResponse(id, result);
+      }
     } catch (e) {
       sendResponse(id, {
         content: [{ type: 'text', text: `Error: ${e.message}` }],
@@ -1385,6 +1406,15 @@ function handleRequest(req) {
 
 // ─── Main ────────────────────────────────────────────────────────────────
 
+let pendingAsyncCalls = 0;
+let stdinClosed = false;
+
+// A settled async call never leaves its response unwritten: exit only once the
+// last one flushed (execFile timeout guarantees settlement within 60s).
+function settleAsyncCall() {
+  if (--pendingAsyncCalls === 0 && stdinClosed) process.exit(0);
+}
+
 // Ensure projects directory exists
 fs.mkdirSync(PROJECTS_DIR, { recursive: true });
 
@@ -1402,7 +1432,10 @@ rl.on('line', (line) => {
   }
 });
 
-rl.on('close', () => process.exit(0));
+rl.on('close', () => {
+  stdinClosed = true;
+  if (pendingAsyncCalls === 0) process.exit(0);
+});
 
 process.on('SIGHUP', () => {
   notifyToolsChanged();
